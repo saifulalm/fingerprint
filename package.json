@@ -1,25 +1,28 @@
 {
-  "name": "fingerprint-attendance-report",
-  "version": "1.0.0",
-  "description": "Hikvision Fingerprint Attendance Report System",
-  "main": "server.js",
+  "name": "fingerprint-attendance-system",
+  "version": "2.0.0",
+  "description": "Hikvision Fingerprint Attendance Report System — Redesigned",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "dependencies": {
-    "axios": "^1.7.2",
-    "cors": "^2.8.5",
-    "dayjs": "^1.11.11",
-    "dotenv": "^16.4.5",
-    "exceljs": "^4.4.0",
-    "express": "^4.19.2",
-    "express-session": "^1.19.0",
-    "nodemailer": "^6.9.14",
-    "pdfkit": "^0.15.0",
-    "xml2js": "^0.6.2"
+    "install:all": "cd server && npm install && cd ../web && npm install",
+    "build:web": "cd web && npm run build",
+    "db:setup": "cd server && npm run setup",
+    "start": "npm run build:web && cd server && npm start",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "cleanup": "node scripts/cleanup-ports.mjs",
+    "test:openwa": "node scripts/run-openwa-integration-test.mjs",
+    "test:openwa:webhook": "node scripts/run-openwa-webhook-test.mjs",
+    "test:ui:webhook": "node scripts/verify-webhook-ui.mjs",
+    "test:ui:audit": "node scripts/verify-audit-clean-ui.mjs",
+    "audit:api": "node scripts/audit-api-wiring.mjs",
+    "verify": "npm run audit:api && npm run verify:server && npm run verify:web",
+    "verify:server": "cd server && npm run verify",
+    "verify:web": "cd web && npm run verify",
+    "mock:openwa": "node scripts/mock-openwa-gateway.mjs"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "concurrently": "^8.2.2"
   }
 }

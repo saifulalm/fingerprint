@@ -1,0 +1,51 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "D:/laragon/www/fingerprint"
+      ]
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:${PGPASSWORD}@localhost:5432/bioclock"
+      ]
+    },
+    "git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git"
+      ]
+    },
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-fetch"
+      ]
+    }
+  },
+  "skills": {
+    "design-inspiration": {
+      "path": ".claude/skills/design-inspiration.md",
+      "description": "UI/UX design references with 2026 trends for BioClock"
+    },
+    "frontend-dev": {
+      "path": ".claude/skills/frontend-dev.md",
+      "description": "React, Vite, Tailwind CSS best practices and component patterns"
+    },
+    "productivity": {
+      "path": ".claude/skills/productivity.md",
+      "description": "Quick commands, troubleshooting, and common tasks"
+    }
+  },
+  "design": {
+    "system": ".claude/DESIGN_SYSTEM_2026.md",
+    "description": "Complete BioClock Design System v3.0 with 2026 trends"
+  }
+}

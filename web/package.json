@@ -1,0 +1,44 @@
+{
+  "name": "fingerprint-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check:tokens": "node scripts/check-design-tokens.mjs",
+    "check:i18n": "node ../scripts/check-i18n-usage.mjs .",
+    "check:settings": "node ../scripts/check-settings-integrity.mjs ..",
+    "check:error-handling": "node scripts/check-error-handling.mjs",
+    "verify": "npm run check:tokens && npm run check:i18n && npm run check:settings && npm run check:error-handling && npm run build"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-select": "^2.3.7",
+    "@radix-ui/react-tabs": "^1.1.21",
+    "@radix-ui/react-tooltip": "^1.2.16",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.104.1",
+    "axios": "^1.7.2",
+    "chart.js": "^4.4.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dayjs": "^1.11.11",
+    "framer-motion": "^11.18.2",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "recharts": "^2.15.4",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.3",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
+  }
+}

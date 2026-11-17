@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AttendanceRecord {
+  // Id dibangun dari data event perangkat (serialNo + employeeNo + deviceKey),
+  // jadi TIDAK boleh punya default — nilainya harus deterministik agar
+  // sinkronisasi ulang tidak membuat baris duplikat.
+  id           String   @id
+  employeeNo   String
+  employeeName String
+  cardNo       String?
+  time         DateTime
+  direction    String
+  verifyMode   String
+  doorNo       Int      @default(1)
+  cardReaderNo Int      @default(1)
+  deviceKey    String
+  deviceLabel  String
+  deviceIP     String
+  major        Int?
+  minor        Int?
+  serialNo     String?
+  userType     String   @default("Normal")
+  validEnd     String?
+  rawTime      String?
+  syncedAt     DateTime @default(now())
+
+  @@index([deviceKey])
+  @@index([employeeName])
+  @@index([time])
+}
+
+model AuditLog {
+  // `id` WAJIB punya default. Tanpa itu, `prisma.auditLog.create({ data: {...} })`
+  // melempar "Argument `id` is missing" dan karena pemanggil menelan error
+  // (`catch (_) {}`), JEJAK AUDIT SEPENUHNYA HENDAK MATI tanpa tanda.
+  // `uuid()` membuat Prisma mengisi id otomatis di sisi aplikasi — tipe kolom
+  // tetap text, jadi data lama tidak perlu dimigrasi.
+  id        String   @id @default(uuid())
+  action    String
+  user      String?
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Device {
+  id        String    @id @default(uuid())
+  label     String
+  ip        String
+  username  String
+  password  String
+  type      String
+  direction String
+  lastSeen  DateTime?
+  lastError String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model ReportSchedule {
+  // Sama seperti AuditLog: tanpa default, create selalu gagal.
+  id           String    @id @default(uuid())
+  name         String
+  enabled      Boolean   @default(true)
+  cronExpr     String
+  period       String    @default("yesterday")
+  channel      String    @default("email")
+  recipients   String?
+  lang         String    @default("id")
+  waGatewayUrl String?
+  lastRun      DateTime?
+  lastStatus   String?
+  lastError    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model SyncJob {
+  id           String    @id @default(uuid())
+  deviceKey    String
+  status       String    @default("running")
+  startTime    DateTime
+  endTime      DateTime?
+  recordsCount Int       @default(0)
+  errorMsg     String?
+  createdAt    DateTime  @default(now())
+}
+
+model SystemSetting {
+  id    String  @id
+  value String?
+  desc  String?
+}
+
+// Nama model di Prisma memakai PascalCase (DeviceUser) supaya accessor
+// `prisma.deviceUser` bekerja — Prisma TIDAK mengonversi snake_case.
+// Nama tabel di PostgreSQL tetap `device_users` lewat pemetaan @@map.
+model DeviceUser {
+  // Id di-generate di sisi aplikasi (crypto.randomUUID) oleh controller,
+  // jadi default di sini hanya jaring pengaman — bukan sumber utama.
+  id         String   @id @default(uuid())
+  employeeNo String
+  name       String
+  deviceKey  String
+  userType   String   @default("normal")
+  cardNo     String?
+  validEnd   String?
+  cachedAt   DateTime @default(now())
+
+  // Status aktif di APLIKASI (bukan di perangkat).
+  //
+  // PENTING: perangkat menolak hard-delete user (`UserInfo/Delete` →
+  // badParameters, `UserInfoDetail/Delete` → MessageParametersLack — sudah
+  // diverifikasi ke dua perangkat nyata). Karena itu "hapus" di aplikasi
+  // berarti soft-delete: baris tetap ada, tapi `enabled=false`.
+  //
+  // `deviceEnabled` mencerminkan status Valid.enable di PERANGKAT. Status
+  // efektif user = enabled (aplikasi) DAN deviceEnabled (perangkat).
+  // Perubahan di perangkat bisa terjadi di luar aplikasi, jadi keduanya
+  // harus dilacak terpisah lalu digabung saat dipakai.
+  enabled       Boolean  @default(true)
+  deviceEnabled Boolean  @default(true)
+
+  @@unique([employeeNo, deviceKey])
+  @@index([employeeNo])
+  @@index([name])
+  @@map("device_users")
+}
+
+// Webhook yang DIREGISTRIKAN ke OpenWA gateway.
+//
+// Satu record = satu webhook di sisi gateway. Disimpan supaya aplikasi bisa
+// menampilkan daftar webhook aktif tanpa menebak-nebak, dan supaya
+// registration bisa dibuat ulang (idempoten) setelah gateway di-restart.
+//
+// PENTING: `remoteId` adalah UUID webhook di sisi gateway. Semua route
+// management OpenWA (update/test/delete) memakai path
+// `/api/sessions/{sessionId}/webhooks/{webhookId}` — sessionId WAJIB UUID
+// sesi, bukan nama sesi. Karena itu `sessionId` disimpan terpisah dari
+// `sessionName`.
+model WhatsAppWebhookRegistration {
+  id String @id @default(uuid())
+
+  // UUID webhook di sisi gateway (untuk route update/test/delete).
+  remoteId String
+
+  // UUID SESI OpenWA. Path API gateway memakai ini.
+  sessionId String
+
+  // Nama sesi OpenWA — hanya untuk tampilan.
+  sessionName String?
+
+  // URL receiver di aplikasi ini.
+  url String
+
+  // Daftar event yang disubscribe (disimpan sebagai JSON teks).
+  events String @default("[]")
+
+  // Secret HMAC — TIDAK pernah dikirim balik ke frontend.
+  secret String?
+
+  // Apakah webhook masih aktif di sisi gateway.
+  active Boolean @default(true)
+
+  lastTriggeredAt DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([remoteId])
+  @@index([sessionId])
+  @@map("whatsapp_webhook_registrations")
+}
+
+// Riwayat event webhook OpenWA yang DITERIMA aplikasi.
+//
+// TIGA alasan model ini ada:
+//   1. DEDUPE. OpenWA memakai delivery "at-least-once": event yang sama bisa
+//      dikirim berkali-kali (retry atau re-fire dari engine). Kunci
+//      `idempotencyKey` bersifat content-based, jadi unik per event — retry
+//      memakai kunci yang sama. Dengan unique constraint di sini, event
+//      duplikat tertangkap oleh DB, bukan oleh logika aplikasi.
+//   2. AUDIT. Semua event dicatat, bukan cuma `message.received`, supaya
+//      operator bisa melihat status sesi, ACK, dan kegagalan delivery.
+//   3. PAYLOAD. Disimpan sebagai TEKS JSON, bukan kolom `Json` Prisma.
+//
+// CATATAN TENTANG KOLOM `Json`:
+//   Prisma `Json?` di PostgreSQL memetakan ke JSONB, dan untuk nilai null
+//   harus membedakan `Prisma.DbNull` vs `Prisma.JsonNull`. Dua kasus itu
+//   sering jadi sumber error runtime yang membingungkan. Karena payload
+//   webhook hanya dibaca sebagai arsip (dan occasional debugging), TEXT
+//   lebih aman dan bebas dari jebakan tersebut.
+model WhatsAppWebhookEvent {
+  id String @id @default(uuid())
+
+  // Nama event OpenWA, mis. 'message.received', 'session.status'.
+  event String
+
+  // ID sesi OpenWA yang mengirim event.
+  sessionId String?
+
+  // ID delivery (baru tiap percobaan) — untuk tracing, BUKAN dedupe.
+  deliveryId String?
+
+  // Kunci idempotensi. UNIQUE — inilah yang sesungguhnya mencegah
+  // pemrosesan ganda.
+  idempotencyKey String @unique
+
+  // 'received' | 'duplicate' | 'processed' | 'ignored' | 'failed'
+  status String @default("received")
+
+  // Ringkasan event pesan (isi kolom `data`).
+  from        String?
+  chatId      String?
+  body        String?
+  eventStatus String?
+
+  // Payload mentah (JSON sebagai TEKS) + alasan jika gagal diproses.
+  //
+  // Disimpan sebagai String, bukan kolom `Json` Prisma: kolom Json di
+  // PostgreSQL memetakan ke JSONB dan perbedaan `DbNull` vs `JsonNull`
+  // sering jadi sumber error runtime. Payload webhook hanya dibaca sebagai
+  // arsip, jadi TEXT lebih aman.
+  payload String?
+  error   String?
+
+  // Jumlah percobaan pemrosesan pada event yang sama.
+  attempts Int @default(1)
+
+  receivedAt DateTime @default(now())
+  processedAt DateTime?
+
+  @@index([event])
+  @@index([receivedAt])
+  @@index([status])
+  @@map("whatsapp_webhook_events")
+}
+
+// Pemetaan ulang nomor ID.
+//
+// MASALAH YANG DISELESAIKAN:
+//   Nomor employee adalah kunci LOKAL di tiap perangkat. ID yang sama bisa
+//   menunjuk orang berbeda di device Masuk vs Keluar (terverifikasi live:
+//   ID 5 = "Juanto" di Masuk tapi "Adit" di Keluar). Akibatnya laporan
+//   absensi salah orang.
+//
+//   Perangkat tidak bisa mengganti employeeNo (Modify → badParameters) dan
+//   tidak bisa menambah user (Add → notSupport). Jadi perbaikan TIDAK bisa
+//   dilakukan di sisi perangkat.
+//
+// SOLUSI:
+//   Tabel ini mencatat bahwa nomor ID tertentu DI PERANGKAT TERTENTU
+//   sebenarnya menunjuk karyawan canonical dengan nomor lain. Resolver nama
+//   memakai tabel ini lebih dulu, sehingga laporan dan WhatsApp memakai nama
+//   yang benar walau angka ID di dua perangkat berbeda.
+//
+//   Contoh nyata (hasil audit 2026-11-10):
+//     device keluar, employeeNo 5 → canonical employeeNo 6 (Adit)
+model EmployeeIdAlias {
+  id String @id @default(uuid())
+
+  // Perangkat tempat nomor ini ditemukan.
+  deviceKey String
+
+  // Nomor employee yang TERBACA di perangkat tersebut.
+  deviceEmployeeNo String
+
+  // Nomor employee canonical (kunci lokal di tabel device_users) yang
+  // sebenarnya di-represented oleh nomor di atas.
+  employeeNo String
+
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@unique([deviceKey, deviceEmployeeNo])
+  @@index([employeeNo])
+  @@map("employee_id_aliases")
+}
