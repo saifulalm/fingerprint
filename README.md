@@ -564,6 +564,31 @@ Semua endpoint diawali `/api`. Endpoint terproteksi butuh header
 
 ## 🧹 Troubleshooting
 
+### "Blocked request. This host (...) is not allowed."
+
+Vite memblokir request yang `Host` header-nya bukan localhost/IP. Muncul saat
+aplikasi diakses lewat domain publik (reverse proxy / tunnel → port 6602).
+
+Host yang diizinkan terdaftar di `web/vite.config.js`:
+
+```js
+server: {
+  host: true,          // listen di semua interface (IPv4 + IPv6)
+  allowedHosts: [
+    'fingerprint.educationpartnerships.net',
+    '.educationpartnerships.net',   // seluruh subdomain
+  ],
+},
+```
+
+Tambahkan domain baru ke `allowedHosts` bila berubah. Entri berawalan `.` cocok
+sebagai **suffix**, jadi cukup satu baris untuk semua subdomain.
+
+> Untuk **produksi**, jangan pakai dev server. Jalankan `npm run build:web` lalu
+> `npm start` — Express menyajikan `web/dist` di port 6601 dan seluruh reverse
+> proxy diarahkan ke sana. Dev server di-port 6602 hanya untuk development dan
+> kini dapat dijangkau dari jaringan lokal.
+
 ### "Tidak dapat terhubung ke server"
 
 Penyebab: proses server/vite yang tertinggal masih memegang port.
