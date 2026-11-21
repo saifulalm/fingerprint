@@ -165,10 +165,40 @@ DEVICE_KELUAR_PASS=Hikvision12
 
 # ─── Timezone (WIB = +07:00) ───────────────────────────
 TZ_OFFSET=+07:00
+
+# ─── Email (FALLBACK — sumber utama ada di UI Pengaturan) ──
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=email-anda@gmail.com
+SMTP_PASS=app-password-16-karakter
+SMTP_FROM=email-anda@gmail.com
+
+# ─── Scheduler ─────────────────────────────────────────
+SCHEDULER_ENABLED=true
 ```
 
 > **`127.0.0.1` bukan `localhost`.** Di Windows, `localhost` sering di-resolve ke
 > IPv6 `::1`, sedangkan PostgreSQL hanya listen di `127.0.0.1` → *Connection refused*.
+
+#### Sumber kebenaran konfigurasi email
+
+Ada **dua** sumber konfigurasi SMTP, dan yang di-DB menang:
+
+| Prioritas | Sumber | Cara diisi | Catatan |
+|:---------:|--------|------------|---------|
+| 1 | Tabel `SystemSetting` (DB) | Tab **Pengaturan → Email/SMTP** | Sumber utama. Password tidak pernah dikirim balik ke browser |
+| 2 | File `server/.env` | Edit manual | Dipakai **hanya** bila DB belum lengkap |
+
+Aturan yang berlaku (`services/settingsService.js` → `resolveSmtpConfig()`):
+
+- DB lengkap (`host` + `user` + `pass`) → dipakai apa adanya, env diabaikan.
+- DB tidak lengkap → dipakai env (`SMTP_HOST`/`SMTP_USER`/`SMTP_PASS`).
+- Keduanya kosong → email/scheduler **tidak dapat mengirim**, dan aplikasi
+  menampilkan pesan yang jelas — bukan diam-diam gagal.
+
+> **Gmail wajib pakai App Password**, bukan password biasa:
+> <https://myaccount.google.com/apppasswords>
 
 #### Variabel `.env` lengkap
 
@@ -182,11 +212,20 @@ TZ_OFFSET=+07:00
 | `DEVICE_MASUK_*` / `DEVICE_KELUAR_*` | — | lihat `.env.example` | Kredensial ISAPI Hikvision |
 | `TZ_OFFSET` | — | `+07:00` | Offset waktu untuk logika absensi |
 | `ALLOWED_ORIGINS` | — | — | Daftar origin CORS, dipisah koma. Kosong = same-origin only |
-| `SMTP_*` | — | — | Email laporan (`SMTP_PASS` = App Password Gmail) |
+| `SMTP_HOST` | — | — | Hostname SMTP (tanpa `https://`, tanpa port) |
+| `SMTP_PORT` | — | `587` | `587` (STARTTLS) atau `465` (SSL/TLS) |
+| `SMTP_SECURE` | — | `false` | `true` **hanya** bila port `465` |
+| `SMTP_USER` | — | — | Username/email pengirim (Gmail = alamat email lengkap) |
+| `SMTP_PASS` | — | — | App Password (bukan password biasa) |
+| `SMTP_FROM` | — | `SMTP_USER` | Alamat/nama pengirim yang tampil di inbox |
+| `SCHEDULER_ENABLED` | — | `true` | `false`/`0`/`no`/`off` mematikan seluruh cron job |
 | `WHATSAPP_SESSION_DIR` | — | `sessions/whatsapp` | Folder sesi Baileys/whatsapp-web.js |
-| `WA_GATEWAY_URL` / `WA_GATEWAY_API_KEY` / `WA_GATEWAY_SESSION` | — | — | Integrasi OpenWA Gateway (opsional) |
+| `WHATSAPP_BAILEYS_SESSION_DIR` | — | `sessions/baileys` | Folder sesi Baileys (pairing QR) |
+| `WA_GATEWAY_URL` / `WA_GATEWAY_API_KEY` / `WA_GATEWAY_KEY` / `WA_GATEWAY_SESSION` | — | — | Integrasi OpenWA Gateway / Fonnte (opsional) |
+| `WA_GATEWAY_TIMEOUT_MS` | — | `8000` | Timeout request ke gateway |
 | `REPORT_DEFAULT_LANG` | — | `id` | Bahasa default laporan terjadwal |
 | `REPORT_DEFAULT_RECIPIENTS` | — | — | Penerima default laporan terjadwal |
+| `LATE_THRESHOLD_HOURS` | — | `09:00` | Jam kerja normal (fallback; UI Pengaturan lebih diprioritaskan) |
 
 ### 5. Push schema + generate Prisma Client
 
@@ -320,6 +359,84 @@ Express menyajikan hasil build SPA dari `web/dist`, jadi **hanya satu port**
 
 ---
 
+## 📧 Uji Email & Scheduler
+
+Ada dua lapis alat uji. Keduanya memakai **mock SMTP server** lokal
+(`scripts/mock-smtp-server.mjs`, tanpa dependensi tambahan) — jadi tidak ada
+email sungguhan yang dikirim dan kuota provider tidak terpakai.
+
+### 1. Uji otomatis (paling cepat)
+
+```bash
+cd server
+npm run test:scheduler     # uji end-to-end scheduler + kredensial email
+npm run test:email         # kirim 1 email uji & tampilkan isinya
+```
+
+`npm run test:scheduler` memverifikasi:
+
+| Yang diuji | Arti |
+|------------|------|
+| Resolusi kredensial | DB (UI Pengaturan) menang, `.env` jadi fallback |
+| Email benar-benar terkirim | Email **diterima** di server SMTP, bukan sekadar "tidak error" |
+| Isi email benar | Subjek, penerima, pengirim, dan HTML laporan diperiksa |
+| Kegagalan tidak disembunyikan | SMTP kosong / tanpa penerima / auth ditolak → **error**, bukan `success` |
+| Status DB akurat | `lastStatus` = `success`/`failed`, `lastError` terisi saat gagal |
+| `SCHEDULER_ENABLED` | `false` mematikan registrasi cron job |
+| Toggle jadwal | Aktif ↔ nonaktif berfungsi |
+
+Seluruh data uji dikembalikan ke kondisi semula saat skrip selesai.
+
+### 2. Uji lewat UI (dengan mock SMTP aktif)
+
+```bash
+cd server
+npm run test:smtp          # jalankan mock SMTP server (port 2525)
+```
+
+Lalu isi `server/.env` (atau tab **Pengaturan → Email/SMTP**) dengan nilai yang
+ditampilkan, jalankan aplikasi, dan coba:
+
+1. Tab **Pengaturan → Email/SMTP** → isi Host/Port/Email/App Password →
+   klik **Test Email** → isi email tujuan → kirim.
+2. Tab **Scheduler** → buat jadwal → klik **Kirim Sekarang** (trigger manual).
+3. Email yang masuk akan **ditampilkan di terminal** tempat `npm run test:smtp`
+   berjalan, dan disimpan ke `server/tmp/smtp-inbox.json`.
+
+### 3. Uji dengan SMTP asli
+
+Isi kredensial Gmail/Google Workspace di **Pengaturan → Email/SMTP**:
+
+| Provider | Host | Port | Secure |
+|----------|------|------|:------:|
+| Gmail / Google Workspace | `smtp.gmail.com` | 587 | `false` |
+| Outlook / Microsoft 365 | `smtp.office365.com` | 587 | `false` |
+| Yahoo Mail | `smtp.mail.yahoo.com` | 587 | `false` |
+| Zoho Mail | `smtp.zoho.com` | 587 | `false` |
+| SendGrid | `smtp.sendgrid.net` | 587 | `false` |
+
+> **Gmail/Google Workspace wajib pakai App Password**, bukan password biasa:
+> <https://myaccount.google.com/apppasswords>
+
+Klik **Test Email** untuk memastikan koneksi, lalu pakai **Kirim Sekarang** di
+tab Scheduler untuk memastikan laporan lengkap terkirim.
+
+### Troubleshooting
+
+| Gejala | Penyebab & solusi |
+|--------|-------------------|
+| `SMTP belum dikonfigurasi` | Host/User/Password kosong di Pengaturan **dan** `.env` |
+| `Invalid login: 535` | Password salah, atau pakai password biasa (harus App Password) |
+| `Host SMTP tidak diizinkan` | Host menunjuk jaringan internal. Pakai hostname publik |
+| `ECONNREFUSED` | Port salah atau diblokir firewall. Port 587 biasanya terbuka |
+| `ETIMEDOUT` | Host tidak bisa dijangkau. Cek DNS & konektivitas |
+| Email tidak terkirim though "sukses" | Fixed — scheduler kini **melempar error**, bukan menelan kegagalan |
+
+> **Matikan scheduler sementara** (untuk uji tanpa email berulang):
+> set `SCHEDULER_ENABLED=false` di `server/.env`, lalu restart server.
+
+---
+
 ## 🏭 Deployment Produksi
 
 ### 1. Server
@@ -422,7 +539,11 @@ server {
 | `npm run seed` | Seed device + muat fixture data saat ini |
 | `npm run export:data` | Ekspor DB → `prisma/fixtures/current-data.json` |
 | `npm run setup` | `db:push` + `db:generate` + `seed` (satu perintah) |
-| `npm run verify` | Gate: prisma-ids + identity + async-handlers + pdf-layout |
+| `npm run test:scheduler` | Uji end-to-end scheduler + email (mock SMTP, tanpa email sungguhan) |
+| `npm run test:email` | Kirim 1 email uji ke mock SMTP & tampilkan isinya |
+| `npm run test:smtp` | Jalankan mock SMTP server (untuk pair dengan `.env`) |
+| `npm run check:scheduler-email` | Guard regresi scheduler + kredensial email |
+| `npm run verify` | Gate: prisma-ids + identity + async-handlers + scheduler-email + pdf-layout |
 
 ### Frontend (`web/`)
 

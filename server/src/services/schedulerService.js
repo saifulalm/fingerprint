@@ -6,7 +6,7 @@ import { buildDetailedReport } from './reportService.js';
 import { fetchAttendanceData } from '../controllers/reportController.js';
 import { fmtDateLong, fmtDateShort, fmtDateTimeIndonesia, nowWIB } from '../utils/time.js';
 import prisma from '../db.js';
-import { loadSettingsMap, settingBool, settingStr } from './settingsService.js';
+import { loadSettingsMap, settingBool, settingStr, resolveSmtpConfig } from './settingsService.js';
 import { assertGatewayUrlAllowed } from '../utils/urlGuard.js';
 
 // ─── State ─────────────────────────────────────────────────────────────────────
@@ -39,15 +39,30 @@ async function getSettingsMap() {
 }
 
 // ─── Build transporter from DB settings ─────────────────────────────────────────
+//
+// Kredensial SMTP diambil dari SATU sumber kebenaran: `resolveSmtpConfig()`.
+// Fungsi itu membaca tabel SystemSetting (diisi lewat UI Pengaturan) dan
+// otomatis jatuh ke `.env` bila setting DB belum lengkap.
+//
+// SEBELUMNYA: fungsi ini membaca `smtp_host`/`smtp_user`/`smtp_pass` LANGSUNG
+// dari DB saja. Konsekuensinya, instalasi yang kredensialnya ada di `.env`
+// (bukan lewat UI) TIDAK PERNAH bisa mengirim email dari scheduler —
+// transporter-nya `null` dan jadwal hanya diam-diam dilewati.
+//
+// Mengganti pembacaan ini dengan `resolveSmtpConfig()` membuat scheduler
+// konsisten dengan `emailController` dan `reportController`, yang sudah
+// memakai fungsi yang sama sejak awal.
+//
+// Mengembalikan null bila kredensial belum lengkap — pemanggil yang
+// memutuskan apa yang terjadi (tidak diam-diam menandai sukses).
 async function getTransporterFromDb() {
-  const s = await getSettingsMap();
-  const host = s.smtp_host, user = s.smtp_user, pass = s.smtp_pass;
-  if (!host || !user || !pass) return null;
+  const smtp = await resolveSmtpConfig();
+  if (!smtp.host || !smtp.user || !smtp.pass) return null;
   return nodemailer.createTransport({
-    host,
-    port: parseInt(s.smtp_port) || 587,
-    secure: settingBool(s, 'smtp_secure', false),
-    auth: { user, pass },
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    auth: { user: smtp.user, pass: smtp.pass },
   });
 }
 
@@ -86,7 +101,41 @@ async function logAudit(action, detail, user = 'scheduler') {
 // ─── Execute one schedule ──────────────────────────────────────────────────────
 async function executeSchedule(schedule) {
   const { id, name, period, channel, recipients, lang, waGatewayUrl } = schedule;
-  const { startDate, endDate } = periodToRange(period);
+
+  // PENTING — nama field hasil `periodToRange()` adalah `start`/`end`,
+  // BUKAN `startDate`/`endDate`.
+  //
+  // SEBELUMNYA: `const { startDate, endDate } = periodToRange(period);`
+  // → kedua variabel bernilai `undefined` karena fungsi itu mengembalikan
+  //   `{ start, end }`. Akibatnya `fetchAttendanceData(undefined, undefined)`
+  //   → Prisma melempar "Invalid value for argument `gte`: Provided Date
+  //   object is invalid" → job SELALU GAGAL, tidak pernah terkirim.
+  //
+  //   Dan kegagalannya TIDAK terlihat: `executeSchedule` menelan error di
+  //   dalam blok catch, sementara `trigger()` tetap membalas `{ success: true }`.
+  //   Jadi user melihat badge "sukses" padahal TIDAK ADA email yang pernah
+  //   dikirim. Bug ini sudah ada sejak scheduler pertama kali ditulis.
+  const range = periodToRange(period);
+  const startDate = range.start;
+  const endDate = range.end;
+
+  // Penjaga tambahan — bila `periodToRange` diubah di masa depan dan
+  // mengembalikan bentuk yang tidak diharapkan, jangan sampai query Prisma
+  // menerima `Invalid Date` (error 500 yang tidak informatif).
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(endDate || '')) {
+    const err = new Error(
+      `Rentang tanggal laporan tidak valid (start="${startDate}", end="${endDate}").
+       Periksa periode jadwal.`
+    );
+    err.status = 500;
+    // Tandai jadwal sebagai gagal + catat audit, lalu lempar ke pemanggil.
+    await prisma.reportSchedule.update({
+      where: { id },
+      data: { lastRun: new Date(), lastStatus: 'failed', lastError: err.message },
+    }).catch(() => { /* abaikan — jangan sampai error masking error asli */ });
+    await logAudit('schedule', `Schedule "${name}" FAILED: ${err.message}`, 'scheduler');
+    throw err;
+  }
 
   console.log(`[Scheduler] Running "${name}" (${period}) → ${fmtDateLong(startDate)} s/d ${fmtDateLong(endDate)}`);
 
@@ -94,7 +143,6 @@ async function executeSchedule(schedule) {
   const s = await getSettingsMap();
   const workStart = settingStr(s, 'work_start', '09:00');
   const workEnd   = settingStr(s, 'work_end', '17:00');
-  const smtpFrom  = s.smtp_from || s.smtp_user || '';
   const waGateway = waGatewayUrl || s.wa_gateway_url || '';
   const companyName = s.company_name || 'Fingerprint System';
   const detectLate = settingBool(s, 'detect_late', true);
@@ -123,39 +171,97 @@ async function executeSchedule(schedule) {
     const subjectEn = `Attendance Report ${companyName} — ${fmtDateLong(startDate)} to ${fmtDateLong(endDate)}`;
     const subject = effectiveLang === 'id' ? subjectId : subjectEn;
 
+    // Ringkasan per kanal — dipakai untuk pesan hasil & audit.
+    const sentChannels = [];
+
     if (channel === 'email' || channel === 'both') {
-      const transporter = await getTransporterFromDb();
-      if (transporter && effectiveRecipients.length) {
-        await transporter.sendMail({
-          from: smtpFrom,
-          to: effectiveRecipients.join(', '),
-          subject,
-          html,
-          text,
-        });
-        console.log(`[Scheduler] Email sent for "${name}"`);
-      } else {
-        console.warn(`[Scheduler] SMTP not configured or no recipients for "${name}"`);
+      // Tidak ada penerima = tidak ada yang bisa dikirimi. Ini KEGAGALAN,
+      // bukan kondisi yang boleh dilewati diam-diam.
+      //
+      // SEBELUMNYA kondisi ini hanya memicu `console.warn` dan jadwal tetap
+      // ditandai `success`. User melihat badge hijau padahal TIDAK ADA email
+      // yang pernah dikirim.
+      if (!effectiveRecipients.length) {
+        throw new Error(
+          'Tidak ada penerima laporan. Isi kolom penerima pada jadwal, ' +
+          'atau set "Penerima Default Laporan" di tab Pengaturan.'
+        );
       }
+
+      const transporter = await getTransporterFromDb();
+      // SMTP belum lengkap = gagal keras. SEBELUMNYA transporter `null`
+      // hanya menghasilkan `console.warn` lalu status tetap `success`.
+      if (!transporter) {
+        throw new Error(
+          'SMTP belum dikonfigurasi. Isi Host, Email Pengirim, dan App Password ' +
+          'di tab Pengaturan, atau set SMTP_HOST/SMTP_USER/SMTP_PASS di .env.'
+        );
+      }
+
+      // `from` diambil dari konfigurasi SMTP yang EFEKTIF (DB → env).
+      //
+      // SEBELUMNYA `from` dibaca dari `s.smtp_from || s.smtp_user` — nilai
+      // yang bisa KOSONG bila kredensial hanya ada di `.env`. Nodemailer
+      // lalu gagal dengan "No 'from' field" ATAU email terkirim dengan
+      // pengirim kosong. Sekarang sumbernya satu: `resolveSmtpConfig()`.
+      const smtp = await resolveSmtpConfig();
+      const mailFrom = smtp.from || smtp.user;
+      if (!mailFrom) {
+        throw new Error('Alamat pengirim email kosong. Set smtp_from atau SMTP_FROM.');
+      }
+
+      await transporter.sendMail({
+        from: mailFrom,
+        to: effectiveRecipients.join(', '),
+        subject,
+        html,
+        text,
+      });
+      sentChannels.push('email');
+      console.log(`[Scheduler] Email sent for "${name}" → ${effectiveRecipients.join(', ')}`);
     }
 
     if (channel === 'whatsapp' || channel === 'both') {
-      if (waGateway && effectiveRecipients.length) {
-        for (const recipient of effectiveRecipients) {
-          await sendViaGateway(waGateway, recipient, text);
-        }
-        console.log(`[Scheduler] WhatsApp sent for "${name}" to ${effectiveRecipients.length} recipient(s)`);
-      } else {
-        console.warn(`[Scheduler] WA gateway not configured or no recipients for "${name}"`);
+      // Sama seperti email: gateway/penerima kosong = kegagalan nyata.
+      if (!effectiveRecipients.length) {
+        throw new Error(
+          'Tidak ada penerima laporan untuk WhatsApp. Isi kolom penerima pada ' +
+          'jadwal, atau set "Penerima Default Laporan" di tab Pengaturan.'
+        );
       }
+      if (!waGateway) {
+        throw new Error(
+          'URL gateway WhatsApp belum dikonfigurasi. Set "WA Gateway URL" di tab ' +
+          'Pengaturan, atau set WA_GATEWAY_URL di .env.'
+        );
+      }
+
+      for (const recipient of effectiveRecipients) {
+        await sendViaGateway(waGateway, recipient, text);
+      }
+      sentChannels.push('whatsapp');
+      console.log(`[Scheduler] WhatsApp sent for "${name}" to ${effectiveRecipients.length} recipient(s)`);
     }
 
     await prisma.reportSchedule.update({
       where: { id },
       data: { lastRun: new Date(), lastStatus: 'success', lastError: null },
     });
-    await logAudit('schedule', `Schedule "${name}" ran successfully — ${channel} to ${effectiveRecipients.length} recipient(s)`, 'scheduler');
+    await logAudit(
+      'schedule',
+      `Schedule "${name}" ran successfully — ${sentChannels.join('+')} to ${effectiveRecipients.length} recipient(s)`,
+      'scheduler'
+    );
     console.log(`[Scheduler] ✓ "${name}" completed successfully`);
+
+    // Kembalikan ringkasan supaya pemanggil (mis. trigger manual) bisa
+    // memberi tahu user email benar-benar terkirim.
+    return {
+      success: true,
+      channels: sentChannels,
+      recipients: effectiveRecipients,
+      period: { startDate, endDate },
+    };
   } catch (err) {
     console.error(`[Scheduler] ✗ "${name}" failed:`, err.message);
     await prisma.reportSchedule.update({
@@ -163,20 +269,59 @@ async function executeSchedule(schedule) {
       data: { lastRun: new Date(), lastStatus: 'failed', lastError: err.message },
     });
     await logAudit('schedule', `Schedule "${name}" FAILED: ${err.message}`, 'scheduler');
+
+    // Rethrow supaya pemanggil manual (POST /:id/trigger) tahu job-nya
+    // GAGAL dan tidak membalas "success" ke user.
+    //
+    // SEBELUMNYA error ditelan di sini, jadi `trigger()` selalu balas
+    // `{ success: true }` — user menekan "Kirim Sekarang", melihat toast
+    // sukses, padahal email TIDAK pernah dikirim.
+    throw err;
   }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 export const schedulerService = {
 
-  /** Load all enabled schedules from DB and register cron jobs */
+  /**
+   * Load all enabled schedules from DB and register cron jobs.
+   *
+   * Scheduler bisa dimatikan lewat env `SCHEDULER_ENABLED=false` — berguna
+   * untuk instalasi yang hanya memakai pemicu manual, atau untuk mencegah
+   * pengiriman email berulang saat server sedang diuji.
+   *
+   * Nilai env yang diterima: 'false' | '0' | 'no' | 'off' (case-insensitive).
+   */
   async init() {
+    const disabled = ['false', '0', 'no', 'off'].includes(
+      String(process.env.SCHEDULER_ENABLED || '').trim().toLowerCase()
+    );
+    if (disabled) {
+      console.log('[Scheduler] Dinonaktifkan lewat SCHEDULER_ENABLED=false — tidak ada job yang didaftarkan');
+      return;
+    }
+
     const schedules = await prisma.reportSchedule.findMany({ where: { enabled: true } });
     for (const s of schedules) this.register(s);
     console.log(`[Scheduler] Initialised — ${schedules.length} job(s) registered`);
   },
 
-  /** Register (or re-register) a single schedule */
+  /**
+   * Register (or re-register) a single schedule.
+   *
+   * PENTING — data diambil dari DB SAAT JOB DIJALANKAN, bukan dari snapshot
+   * saat registrasi.
+   *
+   * SEBELUMNYA: `cron.schedule(cronExpr, () => executeSchedule(schedule))`
+   * memakai objek `schedule` yang tertangkap saat registrasi. Kalau user
+   * mengubah jadwal (mis. ganti penerima, ubah periode, matikan jadwal),
+   * job yang sudah terdaftar masih menjalankan konfigurasi LAMA sampai
+   * server di-restart. Akibatnya laporan bisa terkirim ke penerima yang
+   * sudah dihapus.
+   *
+   * SEKARANG: setiap tick membaca row terbaru dari DB. Perubahan dari UI
+   * langsung berlaku tanpa restart.
+   */
   register(schedule) {
     const { id, cronExpr, enabled } = schedule;
     this.unregister(id);
@@ -187,8 +332,24 @@ export const schedulerService = {
       return;
     }
 
-    const job = cron.schedule(cronExpr, () => {
-      executeSchedule(schedule).catch(err => console.error(`[Scheduler] Job ${id} error:`, err.message));
+    const job = cron.schedule(cronExpr, async () => {
+      try {
+        // Ambil data terbaru — jadwal bisa saja diubah/di-toggle dari UI
+        // sejak job ini didaftarkan.
+        const fresh = await prisma.reportSchedule.findUnique({ where: { id } });
+
+        // Jadwal dihapus atau dimatikan → jangan jalankan.
+        if (!fresh || !fresh.enabled) {
+          console.log(`[Scheduler] Job ${id} dilewati — jadwal dihapus atau dinonaktifkan`);
+          return;
+        }
+
+        await executeSchedule(fresh);
+      } catch (err) {
+        // Error sudah dicatat & di-audit di dalam executeSchedule.
+        // Di sini cukup log ringkas agar tidak ada unhandled rejection.
+        console.error(`[Scheduler] Job ${id} error:`, err.message);
+      }
     }, { timezone: 'Asia/Jakarta' });
 
     jobs.set(id, job);
@@ -215,11 +376,29 @@ export const schedulerService = {
     return prisma.reportSchedule.findMany({ orderBy: { createdAt: 'asc' } });
   },
 
-  /** Run a schedule immediately (manual trigger) */
+  /**
+   * Run a schedule immediately (manual trigger).
+   *
+   * Mengembalikan ringkasan hasil yang BENAR-BENAR terjadi (kanal yang
+   * terkirim, penerima, periode laporan).
+   *
+   * SEBELUMNYA: selalu `{ success: true }` apa pun yang terjadi di dalam
+   * `executeSchedule`. Error (SMTP mati, penerima kosong, perangkat offline)
+   * ditelan sehingga user melihat toast sukses padahal email TIDAK pernah
+   * terkirim. Sekarang error dilempar dan `triggerSchedule` membalas 500
+   * dengan pesan yang bisa ditindaklanjuti.
+   */
   async trigger(id) {
     const schedule = await prisma.reportSchedule.findUnique({ where: { id } });
     if (!schedule) throw new Error('Schedule not found');
-    await executeSchedule(schedule);
-    return { success: true };
+
+    const result = await executeSchedule(schedule);
+
+    return {
+      success: true,
+      channels: result.channels,
+      recipients: result.recipients,
+      period: result.period,
+    };
   },
 };

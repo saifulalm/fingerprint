@@ -57,15 +57,32 @@ const serverSrc = serverFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
 // Key yang memang hanya relevan di sisi server / definisi saja.
 const IGNORE = new Set(['email', 'whatsapp', 'general']);
 
+// File yang HANYA mendefinisikan key (daftar label) — kemunculan key di
+// sini BUKAN bukti bahwa field itu dipakai.
+//
+// PENTING: `settingsService.js` TIDAK boleh dikecualikan. File itu tempat
+// `resolveSmtpConfig()` hidup — di situlah `smtp_port` & `smtp_secure`
+// benar-benar dibaca. Mengecualikannya membuat guard salah melapor
+// "field mati" padahal field-nya aktif.
+const DEFINITION_ONLY_FILES = ['settingsController.js'];
+
+// File yang boleh "membuktikan" pemakaian: file mana pun yang BUKAN
+// file definisi-only.
+const usageFiles = serverFiles.filter(
+  (f) => !DEFINITION_ONLY_FILES.some((d) => f.endsWith(d)),
+);
+
 const dead = [];
 for (const key of uiKeys) {
   if (IGNORE.has(key)) continue;
-  // Hitung kemunculan DI LUAR settingsController ( tempat pemakaian nyata).
-  const hits = serverFiles.filter((f) => {
-    if (f.endsWith('settingsController.js')) return false;
-    if (f.endsWith('settingsService.js')) return false;
-    return readFileSync(f, 'utf8').includes(key);
-  });
+
+  // Key dianggap hidup bila muncul sebagai STRING LITERAL (bukan hanya
+  // sebagai bagian identifier yang lebih panjang) di file pemakaian.
+  //
+  // SEBELUMNYA: `includes(key)` → key `smtp_port` cocok dengan teks
+  // `smtp_port_internal` dsb. Sekarang batas kata diperketat.
+  const re = new RegExp(`['"\`]${key}['"\`]|\\b${key}\\b`);
+  const hits = usageFiles.filter((f) => re.test(readFileSync(f, 'utf8')));
   if (hits.length === 0) dead.push(key);
 }
 

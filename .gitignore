@@ -51,3 +51,9 @@ server/test-*.mjs
 server/test-*.js
 server/test-*.py
 server/run_test.sh
+
+# Backup file .env saat konfigurasi dimodifikasi
+server/.env.bak-*
+
+# Inbox mock SMTP (keluaran alat uji email lokal)
+server/tmp/

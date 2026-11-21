@@ -285,6 +285,31 @@ export async function triggerSchedule(req, res) {
     const result = await schedulerService.trigger(id);
     res.json(result);
   } catch (err) {
+    // SEBELUMNYA semua error dibalas 500 generik. Sekarang dibedakan:
+    //   - jadwal tidak ditemukan → 404
+    //   - kegagalan SMTP / perangkat offline → 502 (upstream gagal)
+    //   - selebihnya → 500
+    //
+    // Penting: `executeSchedule` kini melempar error, jadi trigger manual
+    // BENAR-BENAR memberi tahu user bahwa email tidak terkirim. Sebelumnya
+    // error ditelan dan API selalu membalas `{ success: true }`.
+    console.error('[scheduler/trigger]', err.message);
+
+    if (/tidak ditemukan|not found/i.test(err.message)) {
+      return res.status(404).json({ error: err.message });
+    }
+
+    // Pola error SMTP/Upstream. PENTING: pesan nodemailer untuk auth gagal
+    // adalah "Invalid login: 535 5.7.8 Authentication credentials invalid" —
+    // TIDAK memuat string "EAUTH". Jadi polanya harus menyertakan
+    // "Invalid login" dan "535" juga, kalau tidak error ini salah diklasifikasi
+    // jadi 500 (dan user mengira masalahnya ada di server, bukan di kredensial).
+    const isUpstreamFailure = /SMTP|gateway|ECONN|ETIMEDOUT|ENOTFOUND|EAUTH|Invalid\s+login|535\s|Authentication|socket|timeout/i
+      .test(err.message);
+
+    if (isUpstreamFailure) {
+      return res.status(502).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message });
   }
 }

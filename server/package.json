@@ -13,11 +13,15 @@
     "seed": "node prisma/seed.js",
     "export:data": "node scripts/export-data.mjs",
     "setup": "npm run db:push && npm run db:generate && npm run seed",
+    "test:scheduler": "node scripts/test-scheduler-email.mjs",
+    "test:smtp": "node scripts/test-email-local.mjs",
+    "test:email": "node scripts/test-email-local.mjs --send",
     "check:pdf-layout": "node scripts/probe-pdf-layout.mjs probe-layout.pdf && node scripts/run-pdf-layout-check.mjs probe-layout.pdf",
     "check:prisma-ids": "node scripts/check-prisma-id-defaults.mjs prisma/schema.prisma",
     "check:identity": "node scripts/test-identity-resolver.mjs",
     "check:async-handlers": "node scripts/check-async-handlers.mjs",
-    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:pdf-layout"
+    "check:scheduler-email": "node scripts/check-scheduler-email.mjs",
+    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:pdf-layout"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
