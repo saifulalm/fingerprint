@@ -5,7 +5,7 @@ import { buildDetailedReport, buildExportReport } from '../services/reportServic
 import { syncRangeToDb, checkRangeCoverage } from '../services/attendanceSyncService.js';
 import { loadSettingsMap, settingStr, settingBool, settingInt, resolveSmtpConfig } from '../services/settingsService.js';
 import prisma from '../db.js';
-import { createNameResolver } from '../services/employeeIdentityService.js';
+import { createNameResolver, preferRealName, resolveCanonicalEmployeeNo } from '../services/employeeIdentityService.js';
 import { whatsappService } from '../services/whatsapp.js';
 
 const DEFAULT_WORK_START = '09:00';
@@ -133,9 +133,23 @@ export async function fetchAttendanceData(startDate, endDate, workStart = DEFAUL
 
   const enrichRecord = (r) => {
     const t = r.time instanceof Date ? r.time : new Date(r.time);
-    const displayName = resolver.name(r.employeeNo, r.deviceKey);
+    // Nama ditampilkan memakai SATU sumber kebenaran: resolver terpusat.
+    // `preferRealName` dipakai sebagai jaring pengaman — bila resolver hanya
+    // mengetahui placeholder ("ID 3") karena device_users belum tersinkron,
+    // nama asli yang tersimpan di record tetap dipakai. Tanpa ini laporan
+    // bisa menampilkan "Terlambat rutin: ID 3" alih-alih nama karyawan.
+    const displayName = preferRealName(
+      resolver.name(r.employeeNo, r.deviceKey),
+      r.employeeName,
+    );
+    // Nomor employee bersifat LOKAL per perangkat. Satu orang bisa punya
+    // nomor berbeda di dua perangkat (mis. Adit: 6 di Masuk, 5 di Keluar).
+    // Nomor canonical (yang dipakai di perangkat referensi) dipakai supaya
+    // laporan menampilkan satu nomor yang konsisten per orang.
+    const canonicalNo = resolveCanonicalEmployeeNo(r.employeeNo, resolver.aliases, r.deviceKey);
     return {
       employeeNo:    r.employeeNo,
+      canonicalNo,
       name:          displayName,
       time:          t instanceof Date ? t.toISOString() : String(r.time),
       timeFormatted: t instanceof Date ? t.toISOString() : String(r.time),
@@ -150,6 +164,9 @@ export async function fetchAttendanceData(startDate, endDate, workStart = DEFAUL
       cardNo:        r.cardNo || '-',
       deviceLabel:   r.deviceLabel || null,
       deviceIP:      r.deviceIP || null,
+      // Nama asli dari record disimpan sebagai cadangan. `buildAnalytics`
+      // memakainya sebagai fallback bila `name` ternyata placeholder.
+      employeeName:  r.employeeName || null,
     };
   };
 

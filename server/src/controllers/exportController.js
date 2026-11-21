@@ -5,7 +5,7 @@ import { fetchAllEvents, isValidAccess, getVerifyModeFromMinor, getEmpNo, normNa
 import { dateKey, dayOfWeek, fmtDate, fmtDateLong, fmtDateShort, fmtTime, fmtWIB, fmtWIBShort, isValidDateStr, nowWIB, parseDeviceTime } from '../utils/time.js';
 import { config } from '../config/index.js';
 import prisma from '../db.js';
-import { createNameResolver } from '../services/employeeIdentityService.js';
+import { createNameResolver, preferRealName } from '../services/employeeIdentityService.js';
 
 // ─── Helper: resolver nama karyawan ───────────────────────────────────────────
 //
@@ -98,7 +98,9 @@ async function fetchEvents(startDate, endDate, device, filterName) {
     .map((ev) => {
       const enriched = enrichEvent(ev, devMaps);
       // Use unified name map for consistent display
-      enriched.name = resolver.name(getEmpNo(ev), ev.deviceKey);
+      // PERBAIKAN: bila resolver hanya menghasilkan placeholder ("ID 3"),
+      // pakai nama dari perangkat sebagai cadangan.
+      enriched.name = preferRealName(resolver.name(getEmpNo(ev), ev.deviceKey), ev.name);
       enriched.nameKey = normName(enriched.name);
       return enriched;
     });

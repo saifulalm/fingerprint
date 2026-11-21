@@ -311,7 +311,7 @@ export default function ReportsPage() {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-pad space-y-6">
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl flex items-center gap-3 text-sm font-medium animate-in slide-in-from-bottom-4 ${
@@ -335,22 +335,22 @@ export default function ReportsPage() {
       {/* Date Range Card */}
       <Card className="p-5">
         <div className="flex flex-wrap items-end gap-4">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.from')}</label>
             <input
               type="date"
               value={startDate}
               onChange={e => setStartDate(e.target.value)}
-              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-40"
+              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-full sm:w-40"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.to')}</label>
             <input
               type="date"
               value={endDate}
               onChange={e => setEndDate(e.target.value)}
-              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-40"
+              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-full sm:w-40"
             />
           </div>
           <div className="flex gap-2 ml-auto">
@@ -434,7 +434,7 @@ export default function ReportsPage() {
             </button>
             </div>
           </div>
-          <div className="flex-1 min-w-64 space-y-1.5">
+          <div className="flex-1 min-w-0 sm:min-w-64 space-y-1.5">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">
               {t('rep.recipients_label')}
             </label>

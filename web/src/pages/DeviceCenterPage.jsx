@@ -171,7 +171,7 @@ export default function DeviceCenterPage() {
   };
 
   return (
-    <div>
+    <div className="page-pad">
       {/* ── Header halaman ─────────────────────────────────────────── */}
       <header
         style={{

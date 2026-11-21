@@ -455,7 +455,7 @@ export default function RekapPage() {
   };
 
   return (
-    <div>
+    <div className="page-pad">
       {/* Page Header */}
       <div style={{ marginBottom: 20 }}>
         <h1

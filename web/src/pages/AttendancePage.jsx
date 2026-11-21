@@ -148,14 +148,18 @@ export default function AttendancePage() {
     : DATE_PRESETS.find(p => p.key === key)?.en;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-pad space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[#F1F5F9]">{t('page.attendance.title')}</h1>
           <p className="text-sm text-[#8494AD] mt-1">{t('page.attendance.sub')}</p>
         </div>
-        <div className="flex gap-3">
+        {/* `flex-wrap` + `w-full sm:w-auto`: tanpa itu, dua tombol aksi
+            (Export + Refresh) tidak pernah turun ke baris baru di layar
+            sempit dan mengikuti lebar judul, sehingga mendorong konten
+            melewati batas viewport. */}
+        <div className="flex gap-3 flex-wrap w-full sm:w-auto">
           <Button variant="outline" onClick={handleExport} disabled={data.length === 0 || exportLoading}>
             {exportLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
             {t('top.export')}
@@ -186,9 +190,14 @@ export default function AttendancePage() {
           ))}
         </div>
 
-        {/* Filters */}
+        {/* Filters
+            `w-full sm:w-auto` pada tiap group: tanpa itu, input
+            `w-48` (192px) tidak mau menyusut dan bersama group lain
+            memaksa baris melebar melewati viewport. `flex-1` JANGAN
+            dipakai di sini — ia membagi sisa ruang baris sehingga
+            field date tertekan jadi 34px (terukur). */}
         <div className="flex flex-wrap gap-4 items-end">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.from')}</label>
             <input
               type="date"
@@ -197,7 +206,7 @@ export default function AttendancePage() {
               className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.to')}</label>
             <input
               type="date"
@@ -206,7 +215,7 @@ export default function AttendancePage() {
               className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.device')}</label>
             <select
               value={device}
@@ -218,17 +227,17 @@ export default function AttendancePage() {
               <option value="keluar">{t('f.keluar')}</option>
             </select>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.name_filter')}</label>
             <input
               type="text"
               value={filterName}
               onChange={e => setFilterName(e.target.value)}
               placeholder={lang === 'id' ? 'Nama karyawan...' : 'Employee name...'}
-              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] placeholder:text-[#8494AD] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-48"
+              className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] placeholder:text-[#8494AD] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30 w-full sm:w-48"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.page_size')}</label>
             <select
               value={pageSize}
@@ -241,7 +250,7 @@ export default function AttendancePage() {
               <option value={200}>200</option>
             </select>
           </div>
-          <Button onClick={handleSearch} disabled={loading}>
+          <Button onClick={handleSearch} disabled={loading} className="w-full sm:w-auto">
             <Search size={14} />
             {t('f.show')}
           </Button>

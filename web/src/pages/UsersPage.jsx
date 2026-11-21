@@ -59,7 +59,7 @@ export default function UsersPage() {
   const uniqueEmployees = Object.values(grouped);
 
   return (
-    <div className="users-page">
+    <div className="users-page page-pad">
       <div className="page-header">
         <div className="page-header-text">
           <h2 className="page-title">{t('page.users.title')}</h2>

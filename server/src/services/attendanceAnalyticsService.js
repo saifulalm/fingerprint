@@ -23,6 +23,7 @@
 //
 // Semua metrik dihitung per hari, lalu diagregasi per karyawan & periode.
 import { fmtDateShortLang, fmtDateLongLang, dayOfWeekLang } from '../utils/time.js';
+import { isPlaceholderName, preferRealName } from './employeeIdentityService.js';
 
 // ─── Helper waktu ────────────────────────────────────────────────────────────
 /** "HH:MM" → jumlah menit sejak tengah malam */
@@ -115,16 +116,27 @@ export function buildAnalytics(events, stats, lang = 'id', workStart = '09:00', 
   // ── Langkah 1: kelompokkan per orang per hari ─────────────────────────────
   // Key: nama ternormalisasi (bukan employeeNo) karena satu orang bisa punya
   // lebih dari satu ID di device berbeda (Juanto: ID 5 & ID 7).
+  //
+  // PERBAIKAN: bila nama event ternyata placeholder ("ID 3"), key-nya memakai
+  // perangkat + nomor ID, bukan nama. Dua orang berbeda dengan placeholder
+  // yang sama tidak boleh digabung jadi satu orang — kalau tidak, statistik
+  // keterlambatan salah orang.
   const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
   const people = new Map();
 
   for (const ev of events) {
-    const key = norm(ev.name);
-    if (!key) continue;
+    // Nama asli: pakai yang non-placeholder. `ev.employeeName` adalah nama
+    // yang tersimpan di record absensi (cadangan bila resolver belum sinkron).
+    const displayName = preferRealName(ev.name, ev.employeeName);
+    if (!displayName) continue;
+
+    const key = isPlaceholderName(displayName)
+      ? `#${ev.deviceKey}:${ev.employeeNo}`
+      : norm(displayName);
     if (!people.has(key)) {
       people.set(key, {
         key,
-        name: ev.name,
+        name: displayName,
         employeeNos: new Set(),
         days: new Map(),
         totalAkses: 0,
@@ -134,7 +146,7 @@ export function buildAnalytics(events, stats, lang = 'id', workStart = '09:00', 
       });
     }
     const p = people.get(key);
-    if (ev.employeeNo) p.employeeNos.add(ev.employeeNo);
+    if (ev.employeeNo) p.employeeNos.add(ev.canonicalNo || ev.employeeNo);
     p.totalAkses++;
     if (ev.deviceKey === 'masuk') p.deviceMasuk++;
     else p.deviceKeluar++;
@@ -334,7 +346,7 @@ export function buildAnalytics(events, stats, lang = 'id', workStart = '09:00', 
   if (noKeluar.length) {
     push(
       'warning', 'DEVICE_COVERAGE',
-      lang === 'id' ? 'ID tanpa aktivitas di perangkat keluar' : 'IDs with no activity on exit device',
+      lang === 'id' ? 'Karyawan tanpa aktivitas di perangkat keluar' : 'Employees with no activity on exit device',
       lang === 'id'
         ? `${noKeluar.length} karyawan (${noKeluar.map(e => e.name).join(', ')}) hanya tercatat di perangkat masuk. Durasi kerja untuk karyawan ini tidak dapat diverifikasi secara lengkap.`
         : `${noKeluar.length} employees (${noKeluar.map(e => e.name).join(', ')}) are only recorded on the entry device. Their working duration cannot be fully verified.`,
@@ -353,15 +365,27 @@ export function buildAnalytics(events, stats, lang = 'id', workStart = '09:00', 
   }
 
   // (b) Karyawan terlambat habitual.
+  //
+  // Nama employees dianalisis + nomor ID ditampilkan agar pembaca laporan bisa
+  // mencocokkan ke data perangkat. Nomor ID diambil dari `employeeNos`
+  // (bisa lebih dari satu bila orang yang sama punya ID berbeda per perangkat).
+  const idLabel = (e) => {
+    const nos = (e.employeeNos || []).filter(Boolean);
+    if (!nos.length) return '';
+    const uniq = [...new Set(nos.map(String))];
+    return ` (ID ${uniq.join(', ')})`;
+  };
   for (const e of employees) {
     const rate = e.hariHadir ? (e.lateCount / e.hariHadir) * 100 : 0;
     if (rate >= 30 && e.lateCount >= 3) {
       push(
         'warning', 'LATE_HABITUAL',
-        lang === 'id' ? `Terlambat rutin: ${e.name}` : `Habitual lateness: ${e.name}`,
         lang === 'id'
-          ? `${e.lateCount} dari ${e.hariHadir} hari (${rate.toFixed(0)}%) terlambat, rata-rata ${e.lateAvgMinutes} menit.`
-          : `Late on ${e.lateCount} of ${e.hariHadir} days (${rate.toFixed(0)}%), averaging ${e.lateAvgMinutes} minutes.`,
+          ? `Terlambat rutin: ${e.name}${idLabel(e)}`
+          : `Habitual lateness: ${e.name}${idLabel(e)}`,
+        lang === 'id'
+          ? `${e.lateCount} dari ${e.hariHadir} hari hadir (${rate.toFixed(0)}%) terlambat, rata-rata keterlambatan ${e.lateAvgMinutes} menit.`
+          : `Late on ${e.lateCount} of ${e.hariHadir} days present (${rate.toFixed(0)}%), averaging ${e.lateAvgMinutes} minutes late.`,
         lang === 'id'
           ? `Optimalkan jam kerja atau lakukan pembinaan; rata-rata datang ${e.avgTime}.`
           : `Consider adjusting the shift or coaching; average arrival is ${e.avgTime}.`,
@@ -376,7 +400,7 @@ export function buildAnalytics(events, stats, lang = 'id', workStart = '09:00', 
       lang === 'id'
         ? `Terdapat ${totalLate} kejadian terlambat. Batas saat ini ${workStart}, sedangkan median jam datang aktual ${fmtHM(organization.medianFirstIn)}.`
         : `There are ${totalLate} late arrivals. Current threshold is ${workStart}, while the actual median arrival is ${fmtHM(organization.medianFirstIn)}.`,
-      lang === 'id' ? 'Kurangi keterlambatan tanpa menurunkanProduktivitas' : 'Reduce lateness without hurting productivity',
+      lang === 'id' ? 'Kurangi keterlambatan tanpa menurunkan produktivitas' : 'Reduce lateness without hurting productivity',
     );
   }
 

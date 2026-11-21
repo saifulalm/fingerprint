@@ -4,7 +4,7 @@ import { syncRangeToDb } from '../services/attendanceSyncService.js';
 import { dateKey, dayOfWeek, fmtDate, fmtDateLong, fmtDateShort, fmtDateShortLang, fmtTime, fmtWIB, fmtWIBShort, isValidDateStr, nowWIB, parseDeviceTime, wibRangeToUtc } from '../utils/time.js';
 import { config } from '../config/index.js';
 import prisma from '../db.js';
-import { createNameResolver } from '../services/employeeIdentityService.js';
+import { createNameResolver, preferRealName, resolveCanonicalEmployeeNo } from '../services/employeeIdentityService.js';
 
 // ─── Helper: resolver nama karyawan ─────────────────────────────────────────────
 //
@@ -157,7 +157,10 @@ export async function getAttendanceFromDb(req, res) {
       const dir = r.deviceKey === 'masuk' ? 'Masuk' : 'Keluar';
       // Use getDay() for local time (WIB), NOT getUTCDay() which gives UTC day
       const days = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
-      const displayName = resolver.name(r.employeeNo, r.deviceKey);
+      const displayName = preferRealName(
+        resolver.name(r.employeeNo, r.deviceKey),
+        r.employeeName,
+      );
       return {
         employeeNo: r.employeeNo,
         name: displayName,
@@ -341,13 +344,18 @@ export async function getRekap(req, res) {
     const grouped = new Map();
     records.forEach(r => {
       // Use unified name map for consistent display
-      const name = resolver.name(r.employeeNo, r.deviceKey);
+      const name = preferRealName(resolver.name(r.employeeNo, r.deviceKey), r.employeeName);
       const key  = normName(name);
       if (!grouped.has(key)) {
         grouped.set(key, { name, userType: r.userType || 'Normal', ids: { masuk: new Set(), keluar: new Set() }, totalMasuk: 0, totalKeluar: 0, days: new Set(), firstMasukISO: null, lastKeluarISO: null, events: [] });
       }
       const g = grouped.get(key);
-      if (r.employeeNo) g.ids[r.deviceKey]?.add(r.employeeNo);
+      // Nomor employee bersifat LOKAL per perangkat. Yang ditampilkan adalah
+      // nomor CANONICAL (nomor yang dipakai di perangkat referensi) supaya
+      // satu orang tidak muncul dengan dua nomor berbeda di kolom
+      // "ID Masuk" dan "ID Keluar".
+      const canonicalNo = resolveCanonicalEmployeeNo(r.employeeNo, resolver.aliases, r.deviceKey);
+      if (r.employeeNo) g.ids[r.deviceKey]?.add(canonicalNo);
       if (r.deviceKey === 'masuk') {
         g.totalMasuk++;
         if (!g.firstMasukISO || r.time < g.firstMasukISO) g.firstMasukISO = r.time;

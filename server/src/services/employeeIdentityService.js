@@ -272,6 +272,29 @@ export async function createNameResolver() {
 }
 
 /**
+ * Pilih nama untuk ditampilkan dari dua sumber: nama hasil resolver dan
+ * nama yang tersimpan di data (mis. kolom `attendance_records.employee_name`).
+ *
+ * MASALAH YANG DISELESAIKAN:
+ *   Resolver hanya mengenal orang yang tercatat di tabel `device_users`.
+ *   Bila seorang karyawan terdaftar di perangkat tetapi aplikasinya belum
+ *   melakukan sinkronisasi user, resolver mengembalikan placeholder
+ *   "ID 3" — padahal record absensinya sudah menyimpan nama aslinya
+ *   ("Astrid"). Laporan lalu menampilkan "Terlambat rutin: ID 3" dan
+ *   analisanya salah mengelompokkan orang.
+ *
+ * Aturan: nama pertama yang BUKAN placeholder menang. Kalau keduanya
+ * placeholder, kembalikan yang resolver (konsisten dengan controller lain).
+ */
+export function preferRealName(resolved, fallback) {
+  const r = String(resolved || '').trim();
+  const f = String(fallback || '').trim();
+  if (r && !isPlaceholderName(r)) return r;
+  if (f && !isPlaceholderName(f)) return f;
+  return r || f || '';
+}
+
+/**
  * Resolver versi ringkas untuk kasus yang hanya butuh nama (bukan device).
  *
  * @param {string} employeeNo
@@ -444,6 +467,7 @@ export default {
   resolveCanonicalEmployeeNo,
   resolveDisplayName,
   resolveName,
+  preferRealName,
   detectIdConflicts,
   suggestIdAliases,
 };

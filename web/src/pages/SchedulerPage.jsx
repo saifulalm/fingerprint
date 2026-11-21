@@ -428,7 +428,7 @@ export default function SchedulerPage() {
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '960px', margin: '0 auto' }}>
+    <div className="page-pad" style={{ maxWidth: '960px', margin: '0 auto' }}>
       {/* Toast */}
       {toast && (
         <div style={{

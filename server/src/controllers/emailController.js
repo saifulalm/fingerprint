@@ -5,7 +5,7 @@ import { fetchAllEvents, isValidAccess, getVerifyModeFromMinor, getEmpNo, normNa
 import { dateKey, dayOfWeek, fmtDateLong, fmtDateShort, fmtTime, fmtWIB, isValidDateStr, nowWIB, parseDeviceTime } from '../utils/time.js';
 import { config } from '../config/index.js';
 import prisma from '../db.js';
-import { createNameResolver } from '../services/employeeIdentityService.js';
+import { createNameResolver, preferRealName } from '../services/employeeIdentityService.js';
 import { resolveSmtpConfig } from '../services/settingsService.js';
 
 // -- Email labels (bilingual) --
@@ -89,7 +89,7 @@ function enrichEvent(ev, resolver, lang) {
   // langsung dari perangkat kalau resolver tidak punya entri untuk nomor ini.
   const resolved = resolver?.name(empNo, ev.deviceKey);
   const fallback = (ev.name && ev.name.trim()) ? ev.name.trim() : `ID ${empNo || '?'}`;
-  const name = resolved && !resolved.startsWith('ID ') ? resolved : fallback;
+  const name = preferRealName(resolved, fallback);
 
   const hasRealName = !name.startsWith('ID ');
   const nameKey = hasRealName ? normName(name) : `#${ev.deviceKey}:${empNo}`;

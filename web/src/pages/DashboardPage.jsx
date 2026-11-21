@@ -134,7 +134,7 @@ export default function DashboardPage() {
   const dayEntries = Object.entries(dayMap).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 7);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-pad space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -152,7 +152,7 @@ export default function DashboardPage() {
       {/* Filter Bar */}
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-4">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.from')}</label>
             <input
               type="date"
@@ -161,7 +161,7 @@ export default function DashboardPage() {
               className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.to')}</label>
             <input
               type="date"
@@ -170,7 +170,7 @@ export default function DashboardPage() {
               className="h-10 px-4 rounded-lg bg-[#0F172A]/60 border border-white/10 text-sm text-[#F1F5F9] focus:outline-none focus:ring-2 focus:ring-[#6366F1]/30"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 w-full sm:w-auto">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">{t('f.device')}</label>
             <select
               value={device}

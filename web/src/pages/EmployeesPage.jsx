@@ -117,7 +117,9 @@ function EmployeeCard({ emp, onEdit, onDelete }) {
             aria-label={t('emp.aria_edit')}
             onClick={() => onEdit(emp)}
             style={{
-              width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
+              // 44x44 = target sentuh minimum yang direkomendasikan
+              // WCAG 2.5.5 / Apple HIG untuk layar sentuh.
+              width: '44px', height: '44px', borderRadius: 'var(--radius-md)',
               border: '1px solid var(--border)', background: 'var(--surface)',
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all .15s'
@@ -130,7 +132,9 @@ function EmployeeCard({ emp, onEdit, onDelete }) {
           <button aria-label={t('emp.aria_delete')}
             onClick={() => onDelete(emp)}
             style={{
-              width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
+              // 44x44 = target sentuh minimum yang direkomendasikan
+              // WCAG 2.5.5 / Apple HIG untuk layar sentuh.
+              width: '44px', height: '44px', borderRadius: 'var(--radius-md)',
               border: '1px solid var(--border)', background: 'var(--surface)',
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all .15s'
@@ -521,7 +525,7 @@ export default function EmployeesPage() {
   const needName = total - named;
 
   return (
-    <div>
+    <div className="page-pad">
       <div style={{
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
         marginBottom: '20px', flexWrap: 'wrap', gap: '16px'

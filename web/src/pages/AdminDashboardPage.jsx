@@ -355,14 +355,16 @@ export default function AdminDashboardPage() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px' }}>
+      // Padding responsif: 80px membuat spinner melompong jauh di layar
+      // sempit, sedangkan 0px membuatnya menempel tepi.
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 16px' }}>
         <RefreshCw size={32} style={{ color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="page-pad">
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
         <div>

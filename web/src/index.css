@@ -632,6 +632,21 @@ select.form-control option {
   transform: translateY(-1px);
 }
 
+/* Tombol ghost — dipakai DeviceUserDialog untuk aksi "Batal".
+   Tanpa definisi ini tombol tampil sebagai HTML mentah tanpa border
+   maupun gaya, sehingga tidak terbaca sebagai kontrol. */
+.btn-ghost {
+  color: var(--text-sub);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--border-hover);
+}
+
 /* ─── Loading Overlay ────────────────────────────────────────── */
 .loading-overlay {
   position: absolute;
@@ -1144,6 +1159,163 @@ select.form-control option {
   20%, 80% { transform: translateX(2px); }
   30%, 50%, 70% { transform: translateX(-4px); }
   40%, 60% { transform: translateX(4px); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE / TOUCH OPTIMISATIONS
+   Semua aturan di blok ini hanya berlaku untuk layar sempit
+   (Lebar < 768px). Tujuannya:
+   1. Padding halaman seragam antar halaman (tidak ada halaman yang
+      kontennya menempel tepi layar).
+   2. Target sentuh minimal 44px (rekomendasi WCAG 2.5.5 / Apple HIG).
+   3. Font input minimal 16px agar iOS Safari TIDAK auto-zoom saat
+      field difokuskan (zoom < 16px memaksa pengguna melakukan zoom
+      dua kali untuk mengetik).
+   4. Toast dan tab strip tidak boleh keluar dari viewport.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Padding halaman yang konsisten. Halaman memakai kelas ini pada
+   elemen terluar, menggantikan padding inline yang berbeda-beda
+   (0px, 4px, 20px, 24px, 80px) antar halaman. */
+.page-pad {
+  padding: 24px;
+}
+
+@media (max-width: 767px) {
+  .page-pad {
+    padding: 16px;
+  }
+
+  /* Target sentuh: tombol legacy minimal 44px, varian kecil 40px.
+     `!important` WAJIB: beberapa tombol mengeset `height` lewat style
+     inline (mis. `style={{ height: '36px' }}` pada RekapPage), dan
+     nilai inline beating aturan stylesheet biasa. */
+  .btn {
+    height: 44px !important;
+    padding: 0 18px;
+  }
+
+  .btn-sm {
+    height: 40px !important;
+    padding: 0 14px;
+  }
+
+  /* Tombol generik di dalam halaman: tinggi minimal 40px sebagai
+     target sentuh. Tidak menimpa `width`, sehingga tombol ikon tetap
+     berbentuk kaku. */
+  .page-pad button {
+    min-height: 40px;
+  }
+
+  /* Tombol di topbar (menu, bahasa, refresh) diperbesar agar tidak
+     salah ketuk saat memakai jari. */
+  header button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  /* Chip filter tanggal ("Hari Ini", "7 Hari", …) — tinggi 34px terlalu
+     kecil untuk jari. Minimal 40px tanpa mengubah lebar teks. */
+  .page-pad button.px-4.py-2 {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Tombol icon-only (menu, refresh, tutup dialog) tetap kaku
+     bentuknya, tapi diperbesar agar memenuhi target sentuh 44px. */
+  .page-pad button.p-2,
+  .page-pad button[aria-label] {
+    min-height: 44px;
+  }
+
+  /* Kontrol input minimal 40px tinggi, termasuk yang styled inline
+     (`h-9` = 36px pada ReportsPage dan search EmployeesPage).
+     Search field EmployeesPage memakai pembungkus transparan setebal
+     1px, sehingga tinggi minimal WAJIB ada agar tidak kolaps ke
+     tinggi teks saja (terukur 24px). */
+  .page-pad input,
+  .page-pad select,
+  .page-pad textarea {
+    min-height: 40px;
+  }
+
+  /* Tombol tutup drawer di dalam sidebar (bukan .page-pad). */
+  .drawer button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* iOS auto-zoom: field formulir wajib >= 16px.
+     `!important` WAJIB dipakai: beberapa field memakai `style={{ fontSize:
+     '15px' }}` inline, dan nilai inline beating aturan stylesheet biasa —
+     tanpa `!important`, aturan ini diam-diam tidak berlaku. */
+  .form-control {
+    font-size: 16px !important;
+    height: 44px;
+  }
+
+  textarea.form-control {
+    height: auto;
+    min-height: 96px;
+    font-size: 16px !important;
+  }
+
+  select.form-control {
+    font-size: 16px !important;
+  }
+
+  /* Field input/select/textarea yang memakai style inline (bukan
+     .form-control) juga perlu >= 16px. */
+  input:not([type='checkbox']):not([type='radio']):not([type='button']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Kontrol form harus mengisi lebar group-nya di layar sempit.
+     `select` dan `input[type=date]` punya lebar intrinsik (192px /
+     150px) yang TIDAK bisa menyusut karena `min-width: auto` —
+     tanpa aturan ini, baris filter memaksa halaman meluber
+     (terukur: /attendance scrollWidth 334 vs clientWidth 320). */
+  .page-pad input[type='text'],
+  .page-pad input[type='date'],
+  .page-pad input[type='time'],
+  .page-pad input[type='number'],
+  .page-pad input[type='email'],
+  .page-pad select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Toast tidak boleh keluar dari layar sempit. */
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    align-items: stretch;
+  }
+
+  .toast {
+    max-width: none;
+    width: 100%;
+  }
+
+  /* Card/panel: kurangi padding agar isi tidak terdesak. */
+  .card,
+  .glass-card {
+    padding: 16px;
+  }
+
+  /* Pagination tidak berdesakan di layar sempit. */
+  .pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .page-btn {
+    min-width: 40px;
+    height: 40px;
+  }
 }
 
 /* ─── Accessibility: kurangi animasi sesuai preferensi pengguna ── */

@@ -245,7 +245,9 @@ export default function WhatsAppPage() {
   };
 
   return (
-    <div style={{ padding: '0 4px' }}>
+    <div className="page-pad">
+      {/* Padding halaman diseragamkan lewat kelas .page-pad supaya
+          konten tidak menempel tepi layar pada semua halaman. */}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
@@ -257,6 +259,11 @@ export default function WhatsAppPage() {
           <div style={{
             display: 'inline-flex', gap: '4px', padding: '4px', borderRadius: 'var(--radius-md)',
             background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)',
+            // Tab strip harus boleh membungkus: 3 tab ("WhatsApp",
+            // "Webhook", "Pengaturan") lebarnya 369px, melebihi viewport
+            // 320px sehingga halaman meluber (terukur: scrollWidth 373).
+            flexWrap: 'wrap',
+            maxWidth: '100%',
           }}>
             {[
               { key: 'main', label: t('wa.tab_main'), icon: MessageSquareIcon },

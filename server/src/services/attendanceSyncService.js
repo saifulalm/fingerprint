@@ -13,7 +13,7 @@ import { fetchAllEvents, isValidAccess, getVerifyModeFromMinor, getEmpNo, normNa
 import { config } from '../config/index.js';
 import { parseDeviceTime } from '../utils/time.js';
 import prisma from '../db.js';
-import { createNameResolver } from './employeeIdentityService.js';
+import { createNameResolver, preferRealName } from './employeeIdentityService.js';
 
 /**
  * Bangun resolver nama karyawan.
@@ -60,7 +60,15 @@ export async function syncRangeToDb(startDate, endDate, opts = {}) {
           const empNo = getEmpNo(ev);
           // Resolusi memakai device asal event, supaya alias per-perangkat
           // bisa memperbaiki nomor ID yang konflik.
-          const displayName = resolver.name(empNo, ev.deviceKey);
+          //
+          // PERBAIKAN: bila resolver hanya menghasilkan placeholder
+          // ("ID 3"), pakai nama yang dibaca langsung dari perangkat.
+          // Tanpa ini placeholder TERTANAM di DB dan ikut terbawa ke
+          // laporan, rekap, dan WhatsApp sebagai nama karyawan.
+          const displayName = preferRealName(
+            resolver.name(empNo, ev.deviceKey),
+            ev.name,
+          );
           const parsedTime = parseDeviceTime(ev.time);
           if (!parsedTime || isNaN(parsedTime)) { skipped++; continue; }
 

@@ -32,7 +32,7 @@ export default function DevicesPage() {
   ];
 
   return (
-    <div>
+    <div className="page-pad">
       {/* Page Header */}
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text)', margin: 0, marginBottom: 6 }}>
@@ -43,8 +43,11 @@ export default function DevicesPage() {
         </p>
       </div>
 
-      {/* Device Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 20 }}>
+      {/* Device Cards Grid
+          `minmax(min(360px, 100%), 1fr)`: tanpa `min()`, kolom grid
+          memaksa lebar minimum 360px dan halaman meluber di layar
+          320px (terukur: scrollWidth 360 vs clientWidth 320). */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))', gap: 20 }}>
         {items.map(({ key, label, color }) => {
           const d = devices[key];
           const online = d?.status === 'online';

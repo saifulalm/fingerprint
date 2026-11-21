@@ -3,10 +3,23 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { fmtDateLong, fmtDateShort, fmtTime, fmtWIBShort, dayOfWeek, dayOfWeekShort, dateKey, fmtDateTimeIndonesia, fmtDateIndonesia, fmtDateTimeFull, MONTH_ID_SHORT, DAY_NAMES_FULL, DAY_NAMES_SHORT, fmtDateLongLang, fmtDateShortLang, dayOfWeekLang, fmtDateTimeLang, normalizeLang } from '../utils/time.js';
 import { normName } from '../services/hikvision.js';
+import { preferRealName } from './employeeIdentityService.js';
 import { buildAnalytics, fmtDuration, fmtHM } from './attendanceAnalyticsService.js';
 // Normalize names to avoid duplicate counting across multiple employeeNo for same person
 function normKey(ev) {
-  return normName(ev.name || ev.employeeNo || '');
+  return normName(evName(ev) || ev.employeeNo || '');
+}
+
+// Nama event yang aman untuk ditampilkan.
+//
+// MASALAH: `ev.name` bisa berupa placeholder ("ID 3") bila resolver nama
+// sentral tidak menemukan entri untuk nomor ID tersebut (mis. device_users
+// belum tersinkron). `ev.employeeName` menyimpan nama asli dari perangkat.
+// Tanpa helper ini laporan menampilkan "Terlambat rutin: ID 3" alih-alih nama
+// karyawan. Lihat `preferRealName` di employeeIdentityService.
+function evName(ev) {
+  if (!ev) return '';
+  return preferRealName(ev.name, ev.employeeName) || ev.name || '';
 }
 
 // ─── Late arrival config ───────────────────────────────────────────────────────
@@ -423,14 +436,18 @@ function aggregateByEmployee(events, lang, workStart = '09:00', detectLate = tru
   // as: String(s||'').trim().replace(/\s+/g,' ').toLowerCase()
   const map = new Map();
   events.forEach(ev => {
-    const nameKey = normName(ev.name || '');
+    const evDisplayName = evName(ev);
+    const nameKey = normName(evDisplayName || '');
     if (!map.has(nameKey)) {
+      // Nomor awal juga harus CANONICAL. Kalau diisi dengan nomor lokal,
+      // laporan menampilkan dua nomor untuk orang yang sama ("5, 6").
+      const initialNo = ev.canonicalNo || ev.employeeNo;
       map.set(nameKey, {
-        name:       ev.name,
-        employeeNo: ev.employeeNo,
+        name:       evDisplayName,
+        employeeNo: initialNo,
         userType:   evUserType(ev.userType, lang),
-        allEmployeeNos: new Set([ev.employeeNo].filter(Boolean)),
-        allEmployeeNo:  ev.employeeNo,
+        allEmployeeNos: new Set([initialNo].filter(Boolean)),
+        allEmployeeNo:  initialNo,
         masukList:  [],
         keluarList: [],
         masukWithDate: [],   // { time, dateKey } — dipakai untuk rincian keterlambatan
@@ -439,9 +456,12 @@ function aggregateByEmployee(events, lang, workStart = '09:00', detectLate = tru
       });
     }
     const g = map.get(nameKey);
-    // Merge all employeeNo into display
+    // Merge all employeeNo into display.
+    // Yang ditampilkan adalah nomor CANONICAL (nomor di perangkat referensi)
+    // supaya satu orang tidak muncul dengan dua nomor berbeda.
     if (ev.employeeNo) {
-      g.allEmployeeNos.add(ev.employeeNo);
+      const canonicalNo = ev.canonicalNo || ev.employeeNo;
+      g.allEmployeeNos.add(canonicalNo);
       g.allEmployeeNo = [...g.allEmployeeNos].join(', ');
     }
     const timeOnly = evTimeFull(ev);
@@ -545,14 +565,14 @@ function aggregateByDay(events, lang, workStart = '09:00', detectLate = true, to
     const g = map.get(dk);
     const timeOnly = evTimeFull(ev);
     if (ev.deviceKey === 'masuk') {
-      g.masukList.push({ employeeNo: ev.employeeNo, name: ev.name, time: timeOnly });
+      g.masukList.push({ employeeNo: ev.employeeNo, name: evName(ev), time: timeOnly });
     }
     // Keluar disimpan sebagai objek (bukan string) supaya jumlah "org" di
     // kolom Keluar menghitung ORANG UNIK, bukan jam yang berbeda.
     // Sebelumnya `new Set(g.keluarList).size` menghitung jam unik sehingga
     // kolom Keluar selalu sama dengan jumlah event.
     if (ev.deviceKey === 'keluar') {
-      g.keluarList.push({ employeeNo: ev.employeeNo, name: ev.name, time: timeOnly });
+      g.keluarList.push({ employeeNo: ev.employeeNo, name: evName(ev), time: timeOnly });
     }
   });
 
@@ -892,7 +912,7 @@ function buildHtml(report, lang) {
           return `
         <tr class="${isLateEv ? 'late-row' : ''}">
           <td>${i + 1}</td>
-          <td>${ev.name}</td>
+          <td>${evName(ev)}</td>
           <td>${evDateShort(ev, lang)}</td>
           <td class="${isLateEv ? 'late-text' : ''}">${evTime}</td>
           <td><span class="badge ${ev.deviceKey === 'masuk' ? 'masuk' : 'keluar'}">${evDirection(ev, lang)}</span></td>
@@ -1006,7 +1026,7 @@ function buildText(report, lang) {
     const w = colWidths(heads, [4, 18, 12, 6, 8, 12]);
     parts.push(line(renderRow(heads, w)));
     events.slice(0, 100).forEach((ev, i) => {
-      const cells = [i + 1, ev.name, evDateShort(ev, lang), evTimeOnly(ev), evDirection(ev, lang), evDeviceLabel(ev, lang)];
+      const cells = [i + 1, evName(ev), evDateShort(ev, lang), evTimeOnly(ev), evDirection(ev, lang), evDeviceLabel(ev, lang)];
       parts.push(line(renderRow(cells, w, [0])));
     });
   }
@@ -1372,7 +1392,7 @@ function buildExcelExport(report, lang) {
     const lateMins = detectLate && isMasuk && timeOnly !== '-' ? calculateLateMinutes(timeOnly, workStart, toleranceMinutes) : 0;
     const isLate = lateMins > 0;
     const r = ws4.addRow([
-      idx + 1, ev.name, ev.employeeNo || '-', evDateShort(ev, lang), dayName, timeOnly,
+      idx + 1, evName(ev), ev.employeeNo || '-', evDateShort(ev, lang), dayName, timeOnly,
       evDirection(ev, lang), ev.verifyMode || '-', ev.cardNo || '-',
       evDeviceLabel(ev, lang), ev.doorNo != null ? ev.doorNo : 1,
       isLate ? lateMins + ' ' + lbl('minutesUnit') : '-',
@@ -2071,7 +2091,7 @@ function buildPdfExport(report, lang) {
       lbl('time'), lbl('direction'), lbl('verifyMode'), lbl('doorNo'), lbl('device')];
     const evRows = events.slice(0, 300).map((ev, i) => [
       i + 1,
-      ev.name,
+      evName(ev),
       ev.employeeNo || '-',
       evDateShort(ev, lang),
       evDayName(ev, lang),
