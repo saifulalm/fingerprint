@@ -21,7 +21,8 @@
     "check:identity": "node scripts/test-identity-resolver.mjs",
     "check:async-handlers": "node scripts/check-async-handlers.mjs",
     "check:scheduler-email": "node scripts/check-scheduler-email.mjs",
-    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:pdf-layout"
+    "check:report-names": "node scripts/check-report-names.mjs",
+    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:report-names && npm run check:pdf-layout"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
