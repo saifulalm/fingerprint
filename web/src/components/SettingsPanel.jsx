@@ -399,16 +399,25 @@ export default function SettingsPanel({ showHeader = true }) {
       }
 
       const res = await api.put('/settings', payload);
-      if (res.data?.success || res.success) {
+      const body = res.data;
+      if (body?.success) {
         toast_(t('settings.saved') || (lang === 'id' ? 'Pengaturan tersimpan!' : 'Settings saved!'));
         // Muat ulang supaya tampilan tersamar & penanda "sudah
         // dikonfigurasi" mencerminkan nilai terbaru di DB.
         await load();
       } else {
-        toast_(res.error || t('settings.save_failed') || 'Gagal menyimpan', false);
+        // `api.put()` mengembalikan object axios — pesan error server ada di
+        // `res.data.error`, BUKAN di `res.error`.
+        //
+        // SEBELUMNYA: `toast_(res.error || ...)`. `res.error` tidak pernah
+        // ada pada axios response → kalau server menolak (mis. URL gateway
+        // ditolak guard SSRF), user hanya melihat "Gagal menyimpan" tanpa
+        // penjelasan apa pun.
+        toast_(body?.error || t('settings.save_failed') || 'Gagal menyimpan', false);
       }
     } catch (e) {
-      toast_(e.response?.data?.error || e.message, false);
+      // Interceptor axios sudah mengekstrak pesan server ke `err.serverMessage`.
+      toast_(e.serverMessage || e.response?.data?.error || e.message, false);
     }
     setSaving(false);
   };

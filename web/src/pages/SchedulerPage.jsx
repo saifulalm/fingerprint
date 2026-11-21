@@ -4,9 +4,10 @@ import { useLang } from '../hooks/useLang.js';
 import {
   Calendar, Plus, Trash2, Play, Pause, Edit2,
   Clock, CheckCircle, XCircle, AlertCircle, X, Loader, Check,
-  Mail, MessageSquare, Zap
+  Mail, MessageSquare, Zap, Sparkles
 } from 'lucide-react';
 import api from '../services/api.js';
+import ScheduleTemplatePanel from '../components/ScheduleTemplatePanel.jsx';
 
 const PERIOD_OPTIONS = [
   { value: 'yesterday', label: { id: 'Kemarin (Yesterday)', en: 'Yesterday' } },
@@ -79,14 +80,57 @@ function EnabledBadge({ enabled }) {
   );
 }
 
-function ScheduleForm({ edit, onSave, onCancel }) {
+function ScheduleForm({ edit, onSave, onCancel, templateDraft }) {
   const { t, lang } = useLang();
-  const [form, setForm] = useState({
-    name: '', cronExpr: '0 8 * * 1-5', period: 'yesterday',
-    channel: 'email', recipients: '', lang: 'id', waGatewayUrl: '', enabled: true,
-  });
+
+  // Nilai awal form. Kalau ada template yang dipilih, template yang
+  // menentukan — bukan default.
+  //
+  // SEBELUMNYA form di-mount dengan nilai default, dan template baru
+  // dikirim lewat `useEffect`. Akibatnya form ter-render DULUAN dengan
+  // default, lalu effect `edit` (yang juga berjalan) menimpanya kembali
+  // dengan default → template TIDAK PERNAH terlihat efeknya.
+  //
+  // Solusinya: template ikut menentukan nilai awal SEBELUM render pertama.
+  const [form, setForm] = useState(() => ({
+    name: templateDraft?.name || '',
+    cronExpr: templateDraft?.cronExpr || '0 8 * * 1-5',
+    period: templateDraft?.period || 'yesterday',
+    channel: templateDraft?.channel || 'email',
+    recipients: '',
+    lang: templateDraft?.lang || 'id',
+    waGatewayUrl: '',
+    enabled: true,
+  }));
+
+  // Template yang dipilih SETELAH form ter-mount → isi form.
+  //
+  // `templateDraft` di-trigger ulang kalau user memilih template lain
+  // tanpa menutup form.
+  useEffect(() => {
+    if (!templateDraft) return;
+    setForm(f => ({
+      ...f,
+      name: templateDraft.name || f.name,
+      cronExpr: templateDraft.cronExpr || f.cronExpr,
+      period: templateDraft.period || f.period,
+      channel: templateDraft.channel || f.channel,
+      lang: templateDraft.lang || f.lang,
+    }));
+  }, [templateDraft]);
 
   useEffect(() => {
+    // Kalau template dipilih, JANGAN reset form — template yang menentukan.
+    //
+    // SEBELUMNYA effect ini berada SETELAH effect template, jadi urutannya:
+    //   1. effect template → isi form dengan nilai template
+    //   2. effect edit (else branch) → RESET form ke default
+    // Hasilnya template langsung tertimpa dan tidak pernah terlihat efeknya.
+    //
+    // Prefixed template menang atas edit: template selalu dipilih eksplisit
+    // oleh user lewat tombol, jadi itu yang harus dipakai.
+    if (templateDraft) return;
+
     if (edit) {
       setForm({
         name: edit.name || '',
@@ -131,9 +175,26 @@ function ScheduleForm({ edit, onSave, onCancel }) {
       let res;
       if (edit) { res = await api.put('/scheduler/' + edit.id, payload); }
       else { res = await api.post('/scheduler', payload); }
-      if (res.error) { setError(res.error); return; }
+
+      // `api.post()` mengembalikan object axios. Body respons (berisi
+      // `{ error }` bila server menolak, atau jadwal yang dibuat bila
+      // sukses) ada di `res.data`.
+      //
+      // SEBELUMNYA: `if (res.error) { setError(res.error); return; }`.
+      // `res.error` TIDAK PERNAH ada pada axios response → error server
+      // (mis. "name wajib diisi", "period tidak dikenal") tidak pernah
+      // ditampilkan ke user; form tertutup tanpa penjelasan.
+      //
+      // Server juga bisa membalas 2xx dengan body `{ error }` (mis. dari
+      // proxy), jadi keduanya diperiksa.
+      const body = res.data;
+      if (body?.error) { setError(body.error); return; }
+
       onSave();
-    } catch (e) { setError(e.serverMessage || e.message); }
+    } catch (e) {
+      // Interceptor axios sudah mengekstrak pesan server ke `err.serverMessage`.
+      setError(e.serverMessage || e.response?.data?.error || e.message);
+    }
     setSaving(false);
   };
 
@@ -358,6 +419,12 @@ export default function SchedulerPage() {
   const [actionLoading, setActionLoading] = useState({});
   const [toast, setToast] = useState(null);
 
+  // ─── Template jadwal ───────────────────────────────────────────────────────
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState(null);
+
   const toast_ = (msg, ok = true) => {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 4000);
@@ -366,13 +433,66 @@ export default function SchedulerPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const data = await api.get('/scheduler');
-      setSchedules(Array.isArray(data) ? data : []);
+      // `api.get()` mengembalikan OBJECT AXIOS (`{ data, status, headers }`),
+      // BUKAN body responsnya. Array jadwal ada di `res.data`.
+      //
+      // SEBELUMNYA: `const data = await api.get('/scheduler');` lalu
+      // `setSchedules(Array.isArray(data) ? data : [])`. Karena `data` bukan
+      // array, `Array.isArray(data)` selalu FALSE → `setSchedules([])` →
+      // halaman selalu menampilkan "Belum ada jadwal" — bahkan setelah
+      // jadwal berhasil dibuat (server balas HTTP 201). User mengira
+      // "create schedule tidak tercreate".
+      //
+      // Semua halaman lain di app ini sudah memakai `res.data?.…`
+      // (AttendancePage, EmployeesPage, DeviceCenterPage, dst) — hanya
+      // SchedulerPage yang menyimpang.
+      const res = await api.get('/scheduler');
+      const list = res.data;
+      setSchedules(Array.isArray(list) ? list : []);
     } catch (e) { toast_(e.serverMessage || e.message, false); }
     setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
+
+  // Ambil daftar template dari server.
+  //
+  // Template dikirim dari backend (bukan hardcode di frontend) supaya
+  // cron/period/channel selalu konsisten dengan aturan validasi server.
+  useEffect(() => {
+    let cancelled = false;
+    const loadTemplates = async () => {
+      setTemplatesLoading(true);
+      try {
+        const res = await api.get('/scheduler/templates', { params: { lang } });
+        const list = res.data?.templates;
+        if (!cancelled) setTemplates(Array.isArray(list) ? list : []);
+      } catch (e) {
+        if (!cancelled) {
+          // Template bersifat opsional — kegagalan di sini TIDAK boleh
+          // memblokir halaman. User tetap bisa membuat jadwal manual.
+          console.warn('[scheduler] gagal memuat template:', e.serverMessage || e.message);
+          setTemplates([]);
+        }
+      } finally {
+        if (!cancelled) setTemplatesLoading(false);
+      }
+    };
+    loadTemplates();
+    return () => { cancelled = true; };
+  }, [lang]);
+
+  /**
+   * Terapkan template ke form jadwal.
+   * Form dibuka (kalau belum) lalu diisi dengan nilai template.
+   */
+  const handleApplyTemplate = (tpl) => {
+    setTemplateDraft(tpl);
+    setEditSchedule(null);
+    setShowForm(true);
+    setShowTemplates(false);
+    toast_(t('sched.templates_applied_toast') || 'Template diterapkan. Lengkapi penerima lalu simpan.');
+  };
 
   const handleToggle = async (s) => {
     setActionLoading(a => ({ ...a, [s.id]: true }));
@@ -412,12 +532,14 @@ export default function SchedulerPage() {
 
   const handleNew = () => {
     setEditSchedule(null);
+    setTemplateDraft(null);
     setShowForm(true);
   };
 
   const handleCloseForm = () => {
     setShowForm(false);
     setEditSchedule(null);
+    setTemplateDraft(null);
   };
 
   const fmtDate = (d) => d ? new Date(d).toLocaleString(lang === 'id' ? 'id-ID' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '-';
@@ -463,16 +585,40 @@ export default function SchedulerPage() {
             {t('page.scheduler.sub')}
           </p>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={handleNew} style={{ flexShrink: 0 }}>
-          <Plus size={14} />
-          {t('sched.new_schedule')}
-        </button>
+        <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={() => setShowTemplates(v => !v)}
+            aria-expanded={showTemplates}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Sparkles size={14} />
+            {t('sched.templates_button') || 'Template'}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={handleNew} style={{ flexShrink: 0 }}>
+            <Plus size={14} />
+            {t('sched.new_schedule')}
+          </button>
+        </div>
       </div>
+
+      {/* Panel Template */}
+      {showTemplates && (
+        <ScheduleTemplatePanel
+          templates={templates}
+          loading={templatesLoading}
+          onApply={handleApplyTemplate}
+          onClose={() => setShowTemplates(false)}
+          t={t}
+          lang={lang}
+        />
+      )}
 
       {/* Form Panel */}
       {showForm && (
         <ScheduleForm
           edit={editSchedule}
+          templateDraft={templateDraft}
           onSave={() => { handleCloseForm(); load(); }}
           onCancel={handleCloseForm}
         />

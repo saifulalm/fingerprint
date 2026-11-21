@@ -4,6 +4,7 @@ import { schedulerService } from '../services/schedulerService.js';
 import prisma from '../db.js';
 import { validateGatewayUrl, maskSensitiveUrl } from '../utils/urlGuard.js';
 import { loadSettingsMap } from '../services/settingsService.js';
+import { getScheduleTemplates, validateScheduleTemplates } from '../services/schedulerTemplateService.js';
 
 /**
  * Sanitasi satu schedule sebelum dikirim ke frontend.
@@ -166,6 +167,37 @@ async function validateSchedulePayload(body, { partial = false } = {}) {
   }
 
   return { ok: true, data };
+}
+
+// ─── GET /api/scheduler/templates ─────────────────────────────────────────────
+//
+// Daftar template jadwal siap pakai.
+//
+// Endpoint ini TIDAK butuh autentikasi tambahan — cukup token admin seperti
+// endpoint scheduler lain (auth guard di index.js sudah protecting semua
+// /api/scheduler/*).
+//
+// Query: `lang=id|en` (opsional, default 'id')
+export async function listScheduleTemplates(req, res) {
+  try {
+    // Validasi template saat request — kalau ada template yang memakai
+    // period/channel yang tidak diizinkan server, user akan langsung
+    // melihat kesalahannya, bukan mendapat jadwal yang ditolak saat disimpan.
+    const check = validateScheduleTemplates();
+    if (!check.ok) {
+      console.error('[scheduler/templates] template tidak valid:', check.errors);
+      return res.status(500).json({
+        error: 'Daftar template jadwal bermasalah. Hubungi administrator.',
+        details: check.errors,
+      });
+    }
+
+    const lang = String(req.query?.lang || 'id') === 'en' ? 'en' : 'id';
+    res.json({ templates: getScheduleTemplates(lang) });
+  } catch (err) {
+    console.error('[scheduler/templates]', err);
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function listSchedules(req, res) {
