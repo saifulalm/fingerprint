@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useLang } from '../hooks/useLang.js';
 import {
   Calendar, Plus, Trash2, Play, Pause, Edit2,
-  Clock, CheckCircle, XCircle, AlertCircle, X, Loader, Check,
+  Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, X, Loader, Check,
   Mail, MessageSquare, Zap, Sparkles
 } from 'lucide-react';
 import api from '../services/api.js';
@@ -52,6 +52,24 @@ function StatusBadge({ status }) {
       display: 'inline-flex', alignItems: 'center', gap: '4px'
     }}>
       <XCircle size={10} />
+    </span>
+  );
+  // Status "partial" — teks terkirim tapi sebagian lampiran PDF gagal.
+  //
+  // SEBELUMNYA status ini tidak ada, jadi badge-nya jatuh ke abu-abu
+  // ("belum pernah jalan") — user mengira jadwalnya belum pernah jalan,
+  // padahal job-nya jalan dan TEKSNYA terkirim, hanya PDF-nya yang gagal.
+  if (status === 'partial') return (
+    <span
+      title="Teks terkirim, sebagian lampiran PDF gagal"
+      style={{
+        fontSize: '11px', padding: '3px 10px', borderRadius: 'var(--radius-full)',
+        background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning)',
+        fontWeight: 600, border: '1px solid rgba(245, 158, 11, 0.35)',
+        display: 'inline-flex', alignItems: 'center', gap: '4px'
+      }}
+    >
+      <AlertTriangle size={10} />
     </span>
   );
   return (
@@ -507,9 +525,20 @@ export default function SchedulerPage() {
   const handleTrigger = async (s) => {
     setActionLoading(a => ({ ...a, [s.id]: true }));
     try {
-      await api.post('/scheduler/' + s.id + '/trigger');
+      const res = await api.post('/scheduler/' + s.id + '/trigger');
       await load();
-      toast_(t('sched.trigger_sending'));
+      // Server mengembalikan `attachmentFailures` kalau sebagian lampiran PDF
+      // gagal terkirim (teks tetap terkirim).
+      //
+      // SEBELUMNYA responsnya dibuang sepenuhnya — user selalu melihat toast
+      // "kirim" tanpa tahu ada lampiran yang gagal. Sekarang kegagalan
+      // lampiran ditampilkan sebagai PERINGATAN, bukan sukses biasa.
+      const af = res.data?.attachmentFailures;
+      if (af) {
+        toast_(`${af.count}/${af.total} lampiran PDF gagal — teks tetap terkirim`, false);
+      } else {
+        toast_(t('sched.trigger_sending'));
+      }
     } catch (e) { toast_(e.serverMessage || e.message, false); }
     setActionLoading(a => ({ ...a, [s.id]: false }));
   };

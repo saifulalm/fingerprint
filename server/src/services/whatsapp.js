@@ -829,6 +829,10 @@ export const whatsappService = {
 
     const chatId = toWhatsAppJid(to);
 
+    // Error gateway terakhir — dipakai untuk menyusun pesan yang JUJUR kalau
+    // jalur Baileys juga tidak tersedia.
+    let gatewayError = null;
+
     // ── 1. OpenWA gateway ────────────────────────────────────────────────────
     //
     // Endpoint `send-document` menerima `base64` — jadi PDF bisa dikirim
@@ -846,18 +850,52 @@ export const whatsappService = {
         if (caption) payload.caption = caption;
 
         const result = await gatewayRequest(
-          'POST', '/api/sessions/' + id + '/messages/send-document', payload,
+          'POST', '/api/sessions/' + encodeURIComponent(id) + '/messages/send-document', payload,
         );
         return result;
       } catch (err) {
         console.error('[WhatsApp] Gateway send-document error:', err.message);
-        // Fall through ke Baileys
+
+        // JANGAN jatuh ke Baileys kalau kegagalan gateway tidak pasti berarti
+        // "tidak terkirim".
+        //
+        // `GatewayError` membawa `status`:
+        //   - status > 0  → gateway MENOLAK eksplisit (4xx/5xx). Pesan pasti
+        //     belum terkirim → aman mencoba jalur lain.
+        //   - status = 0  → kegagalan JARINGAN (gateway mati / timeout).
+        //     Gateway bisa saja SUDAH mengirim dokumen lalu responsnya hilang
+        //     di jalan. Kalau kita langsung fallback ke Baileys, dokumen
+        //     terkirim DUA KALI ke penerima yang sama.
+        //
+        // Dalam kasus "tidak pasti", lebih baik laporkan error gateway apa
+        // adanya daripada mengirim ulang.
+        const uncertain = !(err instanceof GatewayError) || err.status === 0;
+        if (uncertain) {
+          const detail = err instanceof GatewayError
+            ? err.message
+            : `${err.name || 'Error'}: ${err.message}`;
+          throw new Error(
+            'Pengiriman dokumen WhatsApp via gateway tidak dapat dipastikan. ' +
+            'Gateway mungkin sudah mengirim dokumen sebelum responsnya hilang ' +
+            '(meng kirim ulang berisiko terkirim dua kali). Detail: ' + detail,
+          );
+        }
+        // Gateway menolak eksplisit → aman lanjut ke Baileys.
+        gatewayError = err;
       }
     }
 
     // ── 2. Baileys langsung ──────────────────────────────────────────────────
     if (!sock || connectionState !== 'connected') {
+      // Pesan error WAJIB menyebut KEDUA transports. SEBELUMNYA pesannya
+      // hanya "gateway tidak dikonfigurasi" — padahal gateway-nya JUSTRU
+      // terkonfigurasi dan GAGAL. User lalu mencari masalah di tempat yang
+      // salah (mis. mengira belum pernah mengatur gateway).
+      const gatewayNote = gatewayError
+        ? 'Gateway terkonfigurasi tapi gagal: ' + gatewayError.message + ' — '
+        : '';
       throw new Error(
+        gatewayNote +
         'WhatsApp belum terhubung dan gateway tidak dikonfigurasi. ' +
         'Scan QR di halaman WhatsApp atau set URL gateway di tab Pengaturan.',
       );

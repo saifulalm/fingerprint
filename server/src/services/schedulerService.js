@@ -200,6 +200,10 @@ async function executeSchedule(schedule) {
     // Ringkasan per kanal — dipakai untuk pesan hasil & audit.
     const sentChannels = [];
 
+    // Kegagalan lampiran PDF (kalau ada) — dipakai untuk menandai hasil job
+    // sebagai "partial", bukan "success".
+    let attachmentFailures = null;
+
     // ─── Lampiran PDF ─────────────────────────────────────────────────────────
     //
     // FEATUR: laporan PDF dilampirkan ke email DAN dikirim sebagai dokumen
@@ -220,6 +224,22 @@ async function executeSchedule(schedule) {
       pdfBuffer = await pdfToBuffer(report, effectiveLang);
     } catch (pdfErr) {
       console.error(`[Scheduler] Gagal membuat lampiran PDF untuk "${name}":`, pdfErr.message);
+    }
+
+    // PDF kosong (Buffer length 0) TIDAK boleh dianggap "ada".
+    //
+    // SEBELUMNYA guard-nya `if (pdfBuffer)` — Buffer kosong adalah objek,
+    // jadi selalu truthy. Hasilnya: lampiran 0 byte dikirim ke email, dan
+    // `sendDocument()` melempar "Isi dokumen kosong" untuk SETIAP penerima
+    // (mencetek error padahal penyebabnya PDF-nya yang kosong).
+    //
+    // `pdfToBuffer()` praktis tidak mengembalikan Buffer kosong (PDFKit
+    // selalu menulis header), tapi guard ini murah dan menutup kelas bug
+    // "nilai kosong lolos sebagai nilai ada".
+    const hasPdf = !!pdfBuffer && pdfBuffer.length > 0;
+    if (pdfBuffer && !hasPdf) {
+      console.error(`[Scheduler] PDF untuk "${name}" kosong (0 byte) — lampiran dilewati.`);
+      pdfBuffer = null;
     }
 
     if (channel === 'email' || channel === 'both') {
@@ -259,7 +279,7 @@ async function executeSchedule(schedule) {
       }
 
       const attachments = [];
-      if (pdfBuffer) {
+      if (hasPdf) {
         attachments.push({
           filename: pdfFilename,
           content: pdfBuffer,
@@ -315,11 +335,12 @@ async function executeSchedule(schedule) {
       //
       // Gatekeeper URL (SSRF) tetap berlaku — `sendDocument()` memakai
       // `resolveGatewayUrl()` yang sudah divalidasi.
-      if (pdfBuffer) {
+      if (hasPdf) {
         const caption = effectiveLang === 'id'
           ? `Laporan absensi ${fmtDateLong(startDate)} s/d ${fmtDateLong(endDate)}`
           : `Attendance report ${fmtDateLong(startDate)} to ${fmtDateLong(endDate)}`;
 
+        const docFailures = [];
         for (const recipient of effectiveRecipients) {
           try {
             await whatsappService.sendDocument(
@@ -332,21 +353,59 @@ async function executeSchedule(schedule) {
             console.error(
               `[Scheduler] Gagal kirim dokumen WhatsApp ke ${recipient}:`, docErr.message,
             );
+            docFailures.push({ recipient, error: docErr.message });
           }
+        }
+
+        // Kegagalan lampiran HARUS terlihat di laporan hasil — kalau tidak,
+        // jadwal tetap ditandai `success` dan audit menulis
+        // "ran successfully", padahal TIDAK SATU pun PDF terkirim.
+        // Keberhasilan parsial yang dilaporkan sebagai keberhasilan penuh
+        // = user mengira semua beres padahal tidak.
+        //
+        // Job TIDAK gagal (pesan teks sudah terkirim), tapi hasilnya
+        // berhasil DENGAN CATATAN.
+        if (docFailures.length) {
+          const detail = docFailures
+            .map((f) => `${f.recipient}: ${f.error}`)
+            .join(' | ');
+          attachmentFailures = {
+            channel: 'whatsapp',
+            count: docFailures.length,
+            total: effectiveRecipients.length,
+            detail,
+          };
+          console.error(
+            `[Scheduler] ${docFailures.length}/${effectiveRecipients.length} lampiran WhatsApp GAGAL: ${detail}`,
+          );
         }
       }
     }
 
+    // Status "success" hanya sah kalau TIDAK ada kegagalan lampiran. Kalau
+    // ada, statusnya "partial" — supaya badge di UI tidak hijau palsu.
+    const hasAttachmentFailures = !!attachmentFailures;
+    const finalStatus = hasAttachmentFailures ? 'partial' : 'success';
+    const finalError = hasAttachmentFailures
+      ? `Lampiran PDF gagal untuk ${attachmentFailures.count}/${attachmentFailures.total} penerima: ${attachmentFailures.detail}`
+      : null;
+
     await prisma.reportSchedule.update({
       where: { id },
-      data: { lastRun: new Date(), lastStatus: 'success', lastError: null },
+      data: { lastRun: new Date(), lastStatus: finalStatus, lastError: finalError },
     });
     await logAudit(
       'schedule',
-      `Schedule "${name}" ran successfully — ${sentChannels.join('+')} to ${effectiveRecipients.length} recipient(s)`,
+      hasAttachmentFailures
+        ? `Schedule "${name}" ran PARTIALLY — ${sentChannels.join('+')} to ${effectiveRecipients.length} recipient(s), ${finalError}`
+        : `Schedule "${name}" ran successfully — ${sentChannels.join('+')} to ${effectiveRecipients.length} recipient(s)`,
       'scheduler'
     );
-    console.log(`[Scheduler] ✓ "${name}" completed successfully`);
+    console.log(
+      hasAttachmentFailures
+        ? `[Scheduler] ⚠ "${name}" completed with attachment failures`
+        : `[Scheduler] ✓ "${name}" completed successfully`,
+    );
 
     // Kembalikan ringkasan supaya pemanggil (mis. trigger manual) bisa
     // memberi tahu user email benar-benar terkirim.
@@ -355,6 +414,10 @@ async function executeSchedule(schedule) {
       channels: sentChannels,
       recipients: effectiveRecipients,
       period: { startDate, endDate },
+      // Non-null kalau sebagian lampiran PDF gagal terkirim. Pemanggil
+      // (mis. controller "Kirim Sekarang") menampilkan ini sebagai
+      // PERINGATAN — bukan "semua berhasil".
+      attachmentFailures,
     };
   } catch (err) {
     console.error(`[Scheduler] ✗ "${name}" failed:`, err.message);

@@ -159,7 +159,7 @@ cek('buildExportReport(excel) menghasilkan file', excelBuf.length > 1000,
 // E. whatsappService.sendDocument() tersedia & memvalidasi input
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n=== E. WHATSAPP sendDocument() ===');
-const { whatsappService } = await import('../src/services/whatsapp.js');
+const { whatsappService, invalidateGatewayUrlCache } = await import('../src/services/whatsapp.js');
 cek('whatsappService.sendDocument ada', typeof whatsappService.sendDocument === 'function');
 
 let errMsg = '';
@@ -218,6 +218,89 @@ const waSvcCode = waSvcSrc
   .join('\n');
 cek('kode produksi memakai document: buffer (bukan { url: ... })',
   /document:\s*buffer\b/.test(waSvcCode) && !/document:\s*\{\s*url:\s*buffer/.test(waSvcCode));
+
+// ─── E3. Fallback gateway: jangan kirim dua kali ──────────────────────────────
+//
+// Gateway yang MENOLAK eksplisit (HTTP 4xx/5xx) → pesan pasti belum
+// terkirim → aman fallback ke transport lain.
+//
+// Gateway yang GAGAL JARINGAN (timeout / mati) → dokumen mungkin SUDAH
+// terkirim lalu responsnya hilang. Fallback ke transport lain = terkirim
+// DUA KALI ke penerima yang sama.
+//
+// `GatewayError` membawa `status`: > 0 = ditolak gateway, 0 = gagal jaringan.
+//
+// Uji ini memakai mock gateway HTTP lokal. Setting `wa_gateway_url` di DB
+// sengaja dikosongkan sementara (dipulihkan di finally) karena setting DB
+// punya prioritas lebih tinggi daripada env.
+console.log('\n=== E3. FALLBACK GATEWAY ===');
+const http = await import('node:http');
+
+function startMockGateway(mode) {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      if (req.url === '/api/health') { res.writeHead(200); res.end('{"status":"ok"}'); return; }
+      if (req.method === 'GET' && req.url.startsWith('/api/sessions')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([{ id: 'sess-1', name: 'default' }]));
+        return;
+      }
+      if (mode === 'hang') return; // tidak pernah menjawab → timeout
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'gateway menolak' }));
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({ srv, port: srv.address().port }));
+  });
+}
+
+const gwSetting = await prisma.systemSetting.findUnique({ where: { id: 'wa_gateway_url' } });
+const gwOriginal = gwSetting ? gwSetting.value : null;
+try {
+  // Kosongkan setting DB supaya env mock yang dipakai.
+  await prisma.systemSetting.upsert({
+    where: { id: 'wa_gateway_url' }, create: { id: 'wa_gateway_url', value: '' },
+    update: { value: '' },
+  });
+
+  // S1 — gateway MENOLAK eksplisit (HTTP 500).
+  {
+    const { srv, port } = await startMockGateway('reject');
+    process.env.WA_GATEWAY_URL = `http://127.0.0.1:${port}`;
+    invalidateGatewayUrlCache();
+    let err = '';
+    try {
+      await whatsappService.sendDocument('628123', Buffer.from('%PDF-1.4 x'), 'l.pdf', 'application/pdf', 'c');
+    } catch (e) { err = e.message; }
+    srv.close();
+    // Tidak boleh dilempar sebagai "tidak dapat dipastikan" — kegagalan
+    // eksplisit aman untuk fallback.
+    cek('gateway menolak eksplisit → BUKAN "tidak dapat dipastikan"',
+      !/tidak dapat dipastikan/i.test(err), `(pesan: ${err.slice(0, 70)})`);
+    cek('pesan error menyebut gateway GAGAL (bukan "tidak dikonfigurasi" saja)',
+      /gateway terkonfigurasi tapi gagal/i.test(err), `(pesan: ${err.slice(0, 70)})`);
+  }
+
+  // S2 — gateway GAGAL JARINGAN (timeout).
+  {
+    const { srv, port } = await startMockGateway('hang');
+    process.env.WA_GATEWAY_URL = `http://127.0.0.1:${port}`;
+    invalidateGatewayUrlCache();
+    let err = '';
+    try {
+      await whatsappService.sendDocument('628123', Buffer.from('%PDF-1.4 x'), 'l.pdf', 'application/pdf', 'c');
+    } catch (e) { err = e.message; }
+    srv.close();
+    cek('gateway gagal jaringan → TIDAK fallback (dokumen mungkin sudah terkirim)',
+      /tidak dapat dipastikan/i.test(err), `(pesan: ${err.slice(0, 90)})`);
+  }
+} finally {
+  // Pulihkan setting gateway seperti semula.
+  await prisma.systemSetting.upsert({
+    where: { id: 'wa_gateway_url' },
+    create: { id: 'wa_gateway_url', value: gwOriginal },
+    update: { value: gwOriginal },
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // F. Guard statis: attachment wired di semua jalur
