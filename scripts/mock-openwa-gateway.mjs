@@ -231,8 +231,21 @@ const server = http.createServer((req, res) => {
           error: 'Bad Request',
         });
       }
-      const hasBase64 = typeof payload.base64 === 'string' && payload.base64.length > 0;
       const hasUrl = typeof payload.url === 'string' && payload.url.length > 0;
+      // base64 didekode LEBIH DAHULU, baru dicek panjangnya.
+      //
+      // SEBELUMNYA: `hasBase64 = payload.base64.length > 0` — string spasi
+      // saja lolos sebagai "ada" (truthy), padahal Node mengabaikannya saat
+      // decode sehingga hasilnya 0 byte. Request dengan dokumen KOSONG
+      // diterima dengan status 201.
+      //
+      // Decoded-dulu membuat check-nya jujur: payload yang tidak menghasilkan
+      // satu byte pun DITOLAK.
+      const buf = typeof payload.base64 === 'string' && payload.base64.length > 0
+        ? Buffer.from(payload.base64, 'base64')
+        : Buffer.from('');
+      const hasBase64 = buf.length > 0;
+
       if (!hasBase64 && !hasUrl) {
         return json(400, {
           statusCode: 400,
@@ -240,9 +253,6 @@ const server = http.createServer((req, res) => {
           error: 'Bad Request',
         });
       }
-      const buf = hasBase64
-        ? Buffer.from(payload.base64, 'base64')
-        : Buffer.from('');
       console.log('[MOCK] send-document →', payload.chatId, '|', payload.filename || '(tanpa nama)',
         '|', buf.length, 'bytes');
       lastDocument = {

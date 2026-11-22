@@ -188,6 +188,69 @@ cek('nama file kosong ditolak', /nama file/i.test(errMsg), `(pesan: ${errMsg})`)
 // Diuji terhadap baileys yang terpasang (getRawMediaUploadData):
 //   { url: buffer } → ENOENT
 //   buffer          → OK
+// ─── E1b. Mock gateway: base64 yang kosong HARUS ditolak ─────────────────────
+//
+// SEBELUMNYA mock gateway menerima `base64` kalau `.length > 0`. String spasi
+// saja lolos sebagai "ada" (truthy), padahal Node mengabaikannya saat decode
+// sehingga hasilnya 0 byte — request dengan dokumen KOSONG diterima dengan
+// status 201.
+//
+// Sekarang base64 didekode dulu, lalu panjang hasil decode-nya yang dicek.
+console.log('\n=== E1b. MOCK GATEWAY: DOKUMEN KOSONG DITOLAK ===');
+{
+  const gwPort = 26000 + Math.floor(Math.random() * 2000);
+  const { spawn } = await import('node:child_process');
+  const gwProc = spawn(process.execPath, [
+    path.resolve('..', 'scripts', 'mock-openwa-gateway.mjs'),
+  ], {
+    env: { ...process.env, MOCK_PORT: String(gwPort), MOCK_API_KEY: 'test-key' },
+    stdio: 'ignore',
+  });
+
+  const gwPost = async (p, body, key = 'test-key') => {
+    const res = await fetch(`http://127.0.0.1:${gwPort}${p}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+      body: JSON.stringify(body),
+    });
+    return res.status;
+  };
+
+  // Tunggu mock siap.
+  let ready = false;
+  for (let i = 0; i < 40 && !ready; i++) {
+    try {
+      const h = await fetch(`http://127.0.0.1:${gwPort}/api/health`);
+      ready = h.ok;
+      if (!ready) await new Promise((r) => setTimeout(r, 150));
+    } catch { await new Promise((r) => setTimeout(r, 150)); }
+  }
+  cek('mock gateway siap', ready, `(port ${gwPort})`);
+
+  if (ready) {
+    const created = await fetch(`http://127.0.0.1:${gwPort}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': 'test-key' },
+      body: JSON.stringify({ name: 'default' }),
+    }).then((r) => r.json());
+    const sid = created?.id || 'session-1';
+    const docPath = `/api/sessions/${sid}/messages/send-document`;
+    const chat = '6281234567890@s.whatsapp.net';
+
+    cek('base64 valid → 201',
+      await gwPost(docPath, { chatId: chat, filename: 'x.pdf',
+        base64: Buffer.from('%PDF-1.4 test').toString('base64') }) === 201);
+    cek('base64 spasi saja → 400 (dokumen kosong)',
+      await gwPost(docPath, { chatId: chat, filename: 'x.pdf', base64: '   ' }) === 400);
+    cek('tanpa base64/url → 400',
+      await gwPost(docPath, { chatId: chat, filename: 'x.pdf' }) === 400);
+    cek('tanpa X-API-Key → ditolak',
+      await gwPost(docPath, { chatId: chat, filename: 'x.pdf',
+        base64: Buffer.from('x').toString('base64') }, '') !== 201);
+  }
+  gwProc.kill();
+}
+
 console.log('\n=== E2. BENTUK MEDIA BAILEYS ===');
 const { getRawMediaUploadData } = await import('baileys');
 let rawErr = '';
