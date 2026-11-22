@@ -358,11 +358,21 @@ try {
   }
 } finally {
   // Pulihkan setting gateway seperti semula.
-  await prisma.systemSetting.upsert({
-    where: { id: 'wa_gateway_url' },
-    create: { id: 'wa_gateway_url', value: gwOriginal },
-    update: { value: gwOriginal },
-  });
+  //
+  // PENTING: kalau row-nya belum ada sama sekali (gwOriginal === null),
+  // row harus DIHAPUS — bukan dibuat dengan nilai kosong. Membuatnya dengan
+  // nilai kosong berarti ada setting "terkonfigurasi tapi kosong", dan
+  // `resolveGatewayUrl()` memperlakukannya sebagai "gateway belum
+  // dikonfigurasi" — bukan berarti "dikosongkan user".
+  if (gwOriginal === null) {
+    await prisma.systemSetting.deleteMany({ where: { id: 'wa_gateway_url' } });
+  } else {
+    await prisma.systemSetting.upsert({
+      where: { id: 'wa_gateway_url' },
+      create: { id: 'wa_gateway_url', value: gwOriginal },
+      update: { value: gwOriginal },
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
