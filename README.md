@@ -359,6 +359,89 @@ Express menyajikan hasil build SPA dari `web/dist`, jadi **hanya satu port**
 
 ---
 
+## 🔗 Konflik Nomor Employee antar Perangkat
+
+Nomor employee adalah kunci **LOKAL** tiap perangkat, jadi penomorannya
+berbeda antar perangkat. Data nyata di instalasi ini:
+
+```
+Fingerprint In (masuk)          Fingerprint Out (keluar)
+2  Saiful                        2  Saiful
+3  Astrid                        3  Astrid
+4  Chika                         4  Chika
+5  Juanto                        5  Adit      ← nomor 5 = orang BERBEDA
+6  Adit                          6  Chika     ← nomor 6 = orang BERBEDA
+   (tidak ada)                   7  Juanto    ← hanya ada di Keluar
+8  Cepi                          8  Cepi
+9  Dian                          9  Dian
+10 Ibu Christina                10 Ibu Christina
+11 Brook                        11 Brook
+```
+
+Akibatnya laporan bisa **salah orang** kalau nomor dipakai sebagai identitas.
+Aplikasi mengatasinya dengan tabel `employee_id_aliases` (nomor di satu
+perangkat → nomor canonical di perangkat acuan `masuk`).
+
+### Alat CLI
+
+```bash
+cd server
+
+# Lihat roster per perangkat + hasil pencocokan berdasarkan NAMA
+npm run match:roster -- check
+
+# Sama, tapi memakai roster CACHE dari DB (untuk perangkat offline)
+npm run match:roster -- check --from-db
+
+# Tampilkan alias yang perlu dibuat
+npm run match:roster -- suggest --from-db
+
+# BUAT alias yang disarankan (yang belum ada)
+npm run match:roster -- apply --from-db --yes
+
+# Buat alias manual untuk satu nomor
+npm run match:roster -- apply --device keluar --no 7 --to 5 \
+  --note "Nomor 7 di Keluar sebenarnya Juanto"
+
+# Audit: device_users vs attendance_records (nama yang tidak cocok)
+npm run audit:device-users
+
+# Perbaiki device_users dari attendance_records (aman, hanya yang tidak ambigu)
+npm run audit:device-users:fix
+
+# Audit: alias yang sudah tidak sesuai kondisi perangkat
+npm run audit:id-aliases
+```
+
+### Aturan penting
+
+- **Perangkat offline → TIDAK ada alias yang ditulis.** Roster yang tidak
+  lengkap bisa menulis pemetaan yang keliru, jadi tool berhenti dan
+  memberi tahu.
+- **Alias yang sudah ada tidak pernah ditimpa** oleh tool. Kalau alias
+  existing menunjuk nomor yang berbeda, hasilnya dilaporkan sebagai
+  "bentrok" untuk ditinjau manual.
+- **Nama dinormalisasi** sebelum pencocokan (spasi berlebih + huruf
+  besar/kecil), jadi `"  ADIT  "` tetap cocok dengan `"Adit"`.
+- **Nama yang sama di dua nomor pada satu perangkat** (mis. "Chika" di
+  No.4 dan No.6 Keluar) ditangani: alias existing dipakai sebagai petunjuk
+  untuk memilih pasangan yang benar.
+
+### Riwayat perpindahan user
+
+Nomor employee juga bisa **berubah** ketika HR memindahkan user. Contoh di
+data repo ini (device "keluar"):
+
+```
+No.5 = Juanto (1–27 Okt)  →  Adit   (28 Okt–11 Nov)
+No.6 = Adit   (1–27 Okt)  →  Chika  (28 Okt–11 Nov)
+```
+
+Ini **riwayat**, bukan data rusak. `npm run match:roster -- check --from-db`
+memperlihkannya per periode.
+
+---
+
 ## 📧 Uji Email & Scheduler
 
 Ada dua lapis alat uji. Keduanya memakai **mock SMTP server** lokal

@@ -23,7 +23,12 @@
     "check:scheduler-email": "node scripts/check-scheduler-email.mjs",
     "check:report-names": "node scripts/check-report-names.mjs",
     "check:api-usage": "node scripts/check-api-response-usage.mjs",
-    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:report-names && npm run check:api-usage && npm run check:pdf-layout"
+    "check:device-roster": "node scripts/test-device-roster-match.mjs",
+    "match:roster": "node scripts/match-device-roster.mjs",
+    "audit:device-users": "node scripts/audit-device-user-consistency.mjs",
+    "audit:device-users:fix": "node scripts/audit-device-user-consistency.mjs --fix",
+    "audit:id-aliases": "node scripts/audit-stale-id-aliases.mjs",
+    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:report-names && npm run check:api-usage && npm run check:device-roster && npm run check:pdf-layout"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
