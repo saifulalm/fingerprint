@@ -1155,6 +1155,39 @@ export function reportTitle(lang, companyName, fallback, customTitle = '') {
   return `${base} — ${company}`;
 }
 
+// ─── Nama file laporan (dipakai email, WhatsApp, scheduler) ──────────────────
+//
+//
+// SEBELUMNYA tiap kanal menulis nama file sendiri:
+//   reportController (email)  → "laporan-absensi-<start>-<end>.pdf"
+//   reportController (WA)     → "laporan-absensi-<start>-<end>.pdf"
+//   settingsController        → "laporan-absensi-test-<start>.pdf"
+//   schedulerService          → "laporan-absensi-<start>-<end>.pdf"
+//   endpoint export           → "attendance-report-<start>-<end>.pdf"
+//
+// Dua masalah:
+//  1. Selalu Bahasa Indonesia, walau laporan berbahasa Inggris ('en') —
+//     subjek email sudah language-aware, nama lampiran tidak.
+//  2. Terduplikasi di empat tempat — perubahan satu kanal bisa melolos dari
+//     kanal lain.
+//
+// Sekarang satu fungsi, dipakai semua kanal.
+//
+// @param {string} lang 'id' | 'en'
+// @param {string} startDate YYYY-MM-DD
+// @param {string} endDate YYYY-MM-DD
+// @param {string} [variant] 'test' untuk email uji
+// @returns {string} nama file
+export function reportFileName(lang, startDate, endDate, variant = '') {
+  const en = lang === 'en';
+  const base = en ? 'attendance-report' : 'laporan-absensi';
+  // Varian "test" (email uji) juga ikut mengikuti bahasa laporan.
+  const tag = variant === 'test' ? (en ? '-test' : '-uji') : '';
+  // Satu hari = start == end → jangan mengulang tanggal yang sama.
+  const range = startDate === endDate ? startDate : `${startDate}-${endDate}`;
+  return `${base}${tag}-${range}.pdf`;
+}
+
 // ─── Helper: PDF sebagai Buffer (untuk attachment email/WhatsApp) ─────────────
 //
 // `buildExportReport(..., 'pdf')` mengembalikan PDFDocument (stream).

@@ -305,7 +305,14 @@ export default function ReportsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `attendance-report-${startDate}-${endDate}.${format === 'excel' ? 'xlsx' : format}`;
+      // Nama file harus sama dengan yang dipakai server (`reportFileName()`),
+      // termasuk mengikuti bahasa laporan. SEBELUMNYA frontend selalu memakai
+      // "attendance-report-…" walau laporan berbahasa Indonesia, jadi nama
+      // file di browser beda dari header Content-Disposition server.
+      const ext = format === 'excel' ? 'xlsx' : format;
+      const base = reportLang === 'en' ? 'attendance-report' : 'laporan-absensi';
+      const range = startDate === endDate ? startDate : `${startDate}-${endDate}`;
+      a.download = `${base}-${range}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

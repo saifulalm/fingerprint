@@ -28,6 +28,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import prisma from '../src/db.js';
+import { reportFileName } from '../src/services/reportService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -234,7 +235,7 @@ try {
   const att = (parsed.attachments || [])[0];
   if (att) {
     cek('nama lampiran benar',
-      att.filename === 'laporan-absensi-2026-11-01-2026-11-07.pdf', `(nama: "${att.filename}")`);
+      att.filename === reportFileName('id', '2026-11-01', '2026-11-07'), `(nama: "${att.filename}")`);
     cek('contentType lampiran application/pdf',
       att.contentType === 'application/pdf', `(tipe: "${att.contentType}")`);
     cek('isi lampiran adalah PDF biner (magic bytes %PDF)',
@@ -299,7 +300,7 @@ try {
   cek('PDF untuk WhatsApp valid', pdfBuf.subarray(0, 4).toString('latin1') === '%PDF',
     `(ukuran: ${pdfBuf.length} bytes)`);
 
-  const filename = 'laporan-absensi-2026-11-01-2026-11-07.pdf';
+  const filename = reportFileName('id', '2026-11-01', '2026-11-07');
   const sendResult = await whatsappService.sendDocument(
     '6281234567890', pdfBuf, filename, 'application/pdf',
     'Laporan absensi 1 November 2026 s/d 7 November 2026',

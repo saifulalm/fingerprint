@@ -1,7 +1,7 @@
 // Report controller — email, WhatsApp preview, export, and HTML preview endpoints
 import nodemailer from 'nodemailer';
 import { dateKey, dayOfWeek, dayOfWeekShort, fmtDateLong, fmtDateLongLang, fmtDateShort, fmtDateShortLang, fmtDateTimeFull, fmtDateTimeIndonesia, fmtDateTimeLang, fmtTime, fmtWIBShort, isValidDateStr, nowWIB, wibRangeToUtc } from '../utils/time.js';
-import { buildDetailedReport, buildExportReport, pdfToBuffer, reportTitle } from '../services/reportService.js';
+import { buildDetailedReport, buildExportReport, pdfToBuffer, reportFileName, reportTitle } from '../services/reportService.js';
 import { syncRangeToDb, checkRangeCoverage } from '../services/attendanceSyncService.js';
 import { loadSettingsMap, settingStr, settingBool, settingInt, resolveSmtpConfig } from '../services/settingsService.js';
 import prisma from '../db.js';
@@ -400,7 +400,7 @@ export async function sendReportEmail(req, res) {
       try {
         const pdfBuffer = await pdfToBuffer(report, lang);
         attachments.push({
-          filename: `laporan-absensi-${startDate}-${endDate}.pdf`,
+          filename: reportFileName(lang, startDate, endDate),
           content: pdfBuffer,
           contentType: 'application/pdf',
         });
@@ -470,7 +470,7 @@ export async function getReportExport(req, res) {
 
     if (format === 'excel') {
       const wb = buildExportReport(data, stats, lang, 'excel', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
-      const filename = `attendance-report-${startDate}-${endDate}.xlsx`;
+      const filename = reportFileName(lang, startDate, endDate).replace(/\.pdf$/, '.xlsx');
 
       // Mode 'base64' — lihat catatan pada cabang 'pdf' di bawah.
       if (req.query.encoding === 'base64') {
@@ -496,7 +496,7 @@ export async function getReportExport(req, res) {
 
     if (format === 'pdf') {
       const doc = buildExportReport(data, stats, lang, 'pdf', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
-      const filename = `attendance-report-${startDate}-${endDate}.pdf`;
+      const filename = reportFileName(lang, startDate, endDate);
 
       // Mode 'base64' mengirim PDF sebagai JSON. Dipakai sebagai fallback
       // ketika browser extension (mis. Internet Download Manager) meng-intercept
@@ -522,7 +522,7 @@ export async function getReportExport(req, res) {
     // HTML — return as downloadable file
     const { html } = buildExportReport(data, stats, lang, 'html', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="attendance-report-${startDate}-${endDate}.html"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${reportFileName(lang, startDate, endDate).replace(/\.pdf$/, '.html')}"`);
     res.send(html);
   } catch (err) {
     console.error('[report/export]', err);
@@ -687,7 +687,7 @@ export async function sendReportWhatsApp(req, res) {
         const pdfBuffer = await pdfToBuffer(report, language);
         pdfAttachment = {
           buffer: pdfBuffer,
-          filename: `laporan-absensi-${startDate}-${endDate}.pdf`,
+          filename: reportFileName(language, startDate, endDate),
           mimetype: 'application/pdf',
         };
       } catch (pdfErr) {

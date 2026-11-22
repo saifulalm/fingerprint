@@ -1,6 +1,6 @@
 // Settings controller — system settings CRUD + test email
 import nodemailer from 'nodemailer';
-import { buildDetailedReport, pdfToBuffer, reportTitle } from '../services/reportService.js';
+import { buildDetailedReport, pdfToBuffer, reportFileName, reportTitle } from '../services/reportService.js';
 import { fetchAttendanceData } from './reportController.js';
 import { fmtDateLong } from '../utils/time.js';
 import {
@@ -358,7 +358,7 @@ export async function testReportEmail(req, res) {
     try {
       const pdfBuffer = await pdfToBuffer(report, reportLang);
       attachments.push({
-        filename: `laporan-absensi-test-${startDate}.pdf`,
+        filename: reportFileName(reportLang, startDate, startDate, 'test'),
         content: pdfBuffer,
         contentType: 'application/pdf',
       });

@@ -151,14 +151,31 @@ if (keysBlock && serverKeys.length === 0) {
   );
 }
 
-// Key yang memang TIDAK punya field UI:
-//   - key grup tab ('email', 'whatsapp', 'general')
-//   - 'smtp_pass' & 'wa_gateway_url' → punya field UI (type password), tetap
-//     di-exemptkan karena nilainya tidak pernah dikirim balik ke form.
+// Key yang dikecualikan dari cek ini.
+//
+// CATATAN — daftar ini HANYA berisi key GRUP TAB ('email', 'whatsapp',
+// 'general'). Key grup TIDAK ada di SETTINGS_KEYS (mereka hanya label
+// pengelompokan di SettingsPanel), jadi sebenarnya TIDAK PERLU diexemptkan
+// sama sekali — dicek juga tidak akan salah, karena `uiKeys` memuatnya.
+//
+// SEBELUMNYA komentar di sini menyebut 'smtp_pass' & 'wa_gateway_url' sebagai
+// pengecualian, padahal keduanya TIDAK ada di daftar — dan keduanya MEMILIKI
+// field UI (tipe password), jadi memang tidak perlu dikecualikan. Komentar
+// itu menyesatkan dan membuat daftar exempt terlihat tidak sinkron dengan
+// kode.
+//
+// Yang TIDAK boleh diexemptkan: setiap key yang punya field UI tapi bermasalah
+// (mis. nilainya tidak pernah dikirim balik ke form) — itu tetap harus punya
+// field UI di form.
 const UI_EXEMPT = new Set(['email', 'whatsapp', 'general']);
 
 const orphanSettings = serverKeys.filter(
   (k) => !UI_EXEMPT.has(k) && !uiKeys.has(k),
+);
+
+// Key server yang MEMILIKI field UI (dasar hitungan angka PASS).
+const coveredSettings = serverKeys.filter(
+  (k) => !UI_EXEMPT.has(k) && uiKeys.has(k),
 );
 
 if (orphanSettings.length) {
@@ -167,7 +184,11 @@ if (orphanSettings.length) {
     `FAIL  setting server tanpa field UI (user tidak bisa mengisinya): ${orphanSettings.join(', ')}`,
   );
 } else {
-  console.log(`PASS  semua ${serverKeys.length - UI_EXEMPT.size} setting server punya field UI`);
+  // Angka PASS dihitung dari key yang benar-benar terpenuhi — bukan dari
+  // `serverKeys.length - UI_EXEMPT.size`. SEBELUMNYA penghitungannya salah:
+  // UI_EXEMPT berisi key yang TIDAK ada di SETTINGS_KEYS, jadi hasilnya
+  // 15 padahal 18 key punya field UI.
+  console.log(`PASS  semua ${coveredSettings.length} setting server punya field UI`);
 }
 
 // ─── 3. Tidak ada menit 60 pada format waktu ───────────────────────────────────

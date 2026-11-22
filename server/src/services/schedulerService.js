@@ -2,7 +2,7 @@
 // Runs report delivery jobs on schedule, supports email + WhatsApp gateway
 import cron from 'node-cron';
 import nodemailer from 'nodemailer';
-import { buildDetailedReport, pdfToBuffer, reportTitle } from './reportService.js';
+import { buildDetailedReport, pdfToBuffer, reportFileName, reportTitle } from './reportService.js';
 import { whatsappService } from './whatsapp.js';
 import { fetchAttendanceData } from '../controllers/reportController.js';
 import { fmtDateLong, fmtDateShort, fmtDateTimeIndonesia, nowWIB } from '../utils/time.js';
@@ -218,7 +218,7 @@ async function executeSchedule(schedule) {
     // Catatan ukuran: WhatsApp membatasi dokumen ±16 MB. PDF laporan 30 hari
     // bisa cukup besar, jadi kegagalan attach tidak boleh menggagalkan
     // pengiriman teks/HTML — error ditangkap & dicatat.
-    const pdfFilename = `laporan-absensi-${startDate}-${endDate}.pdf`;
+    const pdfFilename = reportFileName(effectiveLang, startDate, endDate);
     let pdfBuffer = null;
     try {
       pdfBuffer = await pdfToBuffer(report, effectiveLang);
