@@ -16,9 +16,11 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const pdfArg = process.argv[2];
-if (!pdfArg) {
-  console.error('Pemakaian: node scripts/run-pdf-layout-check.mjs <file.pdf>');
+// Beberapa file boleh diperiksa sekaligus — laporan PDF punya varian
+// (dengan/tanpa branding custom), dan KEDUA-duanya harus bebas tumpang tindih.
+const pdfArgs = process.argv.slice(2).filter(Boolean);
+if (!pdfArgs.length) {
+  console.error('Pemakaian: node scripts/run-pdf-layout-check.mjs <file.pdf> [file2.pdf ...]');
   process.exit(2);
 }
 
@@ -44,5 +46,12 @@ if (!chosen) {
   process.exit(1);
 }
 
-const res = spawnSync(chosen, [checker, pdfArg], { stdio: 'inherit' });
-process.exit(res.status === null ? 1 : res.status);
+// Setiap file diperiksa terpisah; exit code digabung (0 hanya bila SEMUA
+// file bebas tumpang tindih).
+let exitCode = 0;
+for (const pdfArg of pdfArgs) {
+  const res = spawnSync(chosen, [checker, pdfArg], { stdio: 'inherit' });
+  const status = res.status === null ? 1 : res.status;
+  if (status !== 0) exitCode = status;
+}
+process.exit(exitCode);

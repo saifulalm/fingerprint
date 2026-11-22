@@ -2,7 +2,8 @@
 // Runs report delivery jobs on schedule, supports email + WhatsApp gateway
 import cron from 'node-cron';
 import nodemailer from 'nodemailer';
-import { buildDetailedReport } from './reportService.js';
+import { buildDetailedReport, pdfToBuffer, reportTitle } from './reportService.js';
+import { whatsappService } from './whatsapp.js';
 import { fetchAttendanceData } from '../controllers/reportController.js';
 import { fmtDateLong, fmtDateShort, fmtDateTimeIndonesia, nowWIB } from '../utils/time.js';
 import prisma from '../db.js';
@@ -144,7 +145,22 @@ async function executeSchedule(schedule) {
   const workStart = settingStr(s, 'work_start', '09:00');
   const workEnd   = settingStr(s, 'work_end', '17:00');
   const waGateway = waGatewayUrl || s.wa_gateway_url || '';
-  const companyName = s.company_name || 'Fingerprint System';
+  // Nama perusahaan dipakai di judul laporan.
+  //
+  // SEBELUMNYA: `s.company_name || 'Fingerprint System'` — kalau nama
+  // perusahaan kosong, judul laporan scheduler menjadi "… — FINGERPRINT
+  // SYSTEM", berbeda dari halaman Laporan yang memakai "Laporan Absensi".
+  // Dua sumber laporan, dua judul berbeda.
+  //
+  // Sekarang kosong = pakai judul bawaan, sama seperti halaman Laporan.
+  const companyName = String(s.company_name || '').trim();
+  // Branding laporan: judul, subjudul, footer custom dari Pengaturan → Umum.
+  // SEBELUMNYA ketiga setting ini tidak pernah dibaca scheduler.
+  const branding = {
+    title:    String(s.report_title || '').trim(),
+    subtitle: String(s.report_subtitle || '').trim(),
+    footer:   String(s.report_footer || '').trim(),
+  };
   const detectLate = settingBool(s, 'detect_late', true);
   const toleranceMinutes = parseInt(s.late_threshold_minutes, 10) || 0;
   // Bahasa laporan default dari Pengaturan dipakai bila jadwal tidak
@@ -160,19 +176,51 @@ async function executeSchedule(schedule) {
 
   try {
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
-    const { html, text } = buildDetailedReport(
-      data, stats, effectiveLang, workStart, workEnd, detectLate, startDate, endDate, toleranceMinutes,
+    const { html, text, report } = buildDetailedReport(
+      data, stats, effectiveLang, workStart, workEnd, detectLate, startDate, endDate, toleranceMinutes, companyName, branding,
     );
     const recipientsList = (recipients || '').split(',').map(r => r.trim()).filter(Boolean);
     // Gunakan penerima default Pengaturan bila jadwal tidak menentukan.
     const effectiveRecipients = recipientsList.length ? recipientsList : defaultRecipients;
     // Use professional Indonesian date format
-    const subjectId = `Laporan Absensi ${companyName} — ${fmtDateLong(startDate)} s/d ${fmtDateLong(endDate)}`;
-    const subjectEn = `Attendance Report ${companyName} — ${fmtDateLong(startDate)} to ${fmtDateLong(endDate)}`;
+    // Subjek memakai judul yang SAMA dengan isi laporan — kalau judulnya
+    // custom ("Rekap Bulanan"), subjek email/WhatsApp juga ikut custom.
+    //
+    // SEBELUMNYA subjek selalu "Laporan Absensi <company>" walau isi
+    // PDF-nya titled lain.
+    const titleText = reportTitle(
+      effectiveLang, companyName,
+      effectiveLang === 'id' ? 'Laporan Absensi' : 'Attendance Report',
+      branding.title,
+    );
+    const subjectId = `${titleText} — ${fmtDateLong(startDate)} s/d ${fmtDateLong(endDate)}`;
+    const subjectEn = `${titleText} — ${fmtDateLong(startDate)} to ${fmtDateLong(endDate)}`;
     const subject = effectiveLang === 'id' ? subjectId : subjectEn;
 
     // Ringkasan per kanal — dipakai untuk pesan hasil & audit.
     const sentChannels = [];
+
+    // ─── Lampiran PDF ─────────────────────────────────────────────────────────
+    //
+    // FEATUR: laporan PDF dilampirkan ke email DAN dikirim sebagai dokumen
+    // WhatsApp.
+    //
+    // ALASAN: penerima biasanya mau Arsipkan/mencetak laporan. Selama ini
+    // hanya HTML (email) atau teks ringkasan (WhatsApp) yang terkirim.
+    //
+    // Objek `report` yang SAMA dipakai untuk HTML → angka di PDF dan HTML
+    // dijamin identik.
+    //
+    // Catatan ukuran: WhatsApp membatasi dokumen ±16 MB. PDF laporan 30 hari
+    // bisa cukup besar, jadi kegagalan attach tidak boleh menggagalkan
+    // pengiriman teks/HTML — error ditangkap & dicatat.
+    const pdfFilename = `laporan-absensi-${startDate}-${endDate}.pdf`;
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await pdfToBuffer(report, effectiveLang);
+    } catch (pdfErr) {
+      console.error(`[Scheduler] Gagal membuat lampiran PDF untuk "${name}":`, pdfErr.message);
+    }
 
     if (channel === 'email' || channel === 'both') {
       // Tidak ada penerima = tidak ada yang bisa dikirimi. Ini KEGAGALAN,
@@ -210,15 +258,28 @@ async function executeSchedule(schedule) {
         throw new Error('Alamat pengirim email kosong. Set smtp_from atau SMTP_FROM.');
       }
 
+      const attachments = [];
+      if (pdfBuffer) {
+        attachments.push({
+          filename: pdfFilename,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      }
+
       await transporter.sendMail({
         from: mailFrom,
         to: effectiveRecipients.join(', '),
         subject,
         html,
         text,
+        attachments,
       });
       sentChannels.push('email');
-      console.log(`[Scheduler] Email sent for "${name}" → ${effectiveRecipients.join(', ')}`);
+      console.log(
+        `[Scheduler] Email sent for "${name}" → ${effectiveRecipients.join(', ')}` +
+        `${attachments.length ? ` | lampiran: ${attachments[0].filename} (${pdfBuffer.length} bytes)` : ''}`,
+      );
     }
 
     if (channel === 'whatsapp' || channel === 'both') {
@@ -241,6 +302,39 @@ async function executeSchedule(schedule) {
       }
       sentChannels.push('whatsapp');
       console.log(`[Scheduler] WhatsApp sent for "${name}" to ${effectiveRecipients.length} recipient(s)`);
+
+      // ─── Lampiran PDF via WhatsApp ──────────────────────────────────────────
+      //
+      // FEATUR: PDF laporan dikirim sebagai dokumen WhatsApp (bukan cuma teks
+      // ringkasan).
+      //
+      // Dua jalur gateway:
+      //   - OpenWA   → `POST /api/sessions/:id/messages/send-document`
+      //   - Baileys  → `sock.sendMessage(jid, { document })`
+      // keduanya ditangani `whatsappService.sendDocument()`.
+      //
+      // Gatekeeper URL (SSRF) tetap berlaku — `sendDocument()` memakai
+      // `resolveGatewayUrl()` yang sudah divalidasi.
+      if (pdfBuffer) {
+        const caption = effectiveLang === 'id'
+          ? `Laporan absensi ${fmtDateLong(startDate)} s/d ${fmtDateLong(endDate)}`
+          : `Attendance report ${fmtDateLong(startDate)} to ${fmtDateLong(endDate)}`;
+
+        for (const recipient of effectiveRecipients) {
+          try {
+            await whatsappService.sendDocument(
+              recipient, pdfBuffer, pdfFilename, 'application/pdf', caption,
+            );
+            console.log(`[Scheduler] WhatsApp document sent to ${recipient} (${pdfBuffer.length} bytes)`);
+          } catch (docErr) {
+            // Lampiran gagal → pesan teks sudah terkirim. Jangan gagalkan
+            // seluruh job hanya karena satu dokumen tidak bisa dikirim.
+            console.error(
+              `[Scheduler] Gagal kirim dokumen WhatsApp ke ${recipient}:`, docErr.message,
+            );
+          }
+        }
+      }
     }
 
     await prisma.reportSchedule.update({

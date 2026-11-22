@@ -1,6 +1,6 @@
 // Settings controller — system settings CRUD + test email
 import nodemailer from 'nodemailer';
-import { buildDetailedReport } from '../services/reportService.js';
+import { buildDetailedReport, pdfToBuffer } from '../services/reportService.js';
 import { fetchAttendanceData } from './reportController.js';
 import { fmtDateLong } from '../utils/time.js';
 import {
@@ -32,6 +32,9 @@ export const SETTINGS_KEYS = [
   { key: 'wa_default_to',  label: 'Default Recipient',    group: 'whatsapp', password: false, placeholder: '6281234567890', desc: 'Nomor default penerima WhatsApp' },
   // General
   { key: 'company_name',   label: 'Nama Perusahaan',      group: 'general', password: false, placeholder: 'PT. Nama Perusahaan', desc: 'Nama perusahaan untuk laporan' },
+  { key: 'report_title',   label: 'Judul Laporan',        group: 'general', password: false, placeholder: 'Laporan Absensi', desc: 'Judul utama laporan (PDF/HTML/Excel). Kosong = pakai judul bawaan' },
+  { key: 'report_subtitle', label: 'Subjudul Laporan',    group: 'general', password: false, placeholder: 'Rekap Absensi Karyawan', desc: 'Teks kecil di bawah judul (opsional)' },
+  { key: 'report_footer',  label: 'Footer Laporan',      group: 'general', password: false, placeholder: 'Rahasia — hanya untuk internal', desc: 'Teks kaki halaman laporan (opsional)' },
   { key: 'report_lang',    label: 'Bahasa Laporan Default', group: 'general', password: false, placeholder: 'id', options: ['id', 'en'], desc: 'Bahasa default laporan' },
   { key: 'work_start',     label: 'Jam Masuk Normal',     group: 'general', password: false, placeholder: '09:00', desc: 'Threshold deteksi keterlambatan (HH:MM)' },
   { key: 'work_end',       label: 'Jam Pulang Normal',    group: 'general', password: false, placeholder: '17:00', desc: 'Threshold deteksi pulang awal (HH:MM)' },
@@ -300,9 +303,19 @@ export async function testReportEmail(req, res) {
     const workEnd   = settings.work_end || '17:00';
     const detectLate = settingBool(settings, 'detect_late', true);
     const reportLang = settings.report_lang || lang;
+    const companyName = settingStr(settings, 'company_name', '');
+    // Branding: judul/subjudul/footer custom — supaya email uji menampilkan
+    // PERSIS seperti laporan yang akan dikirim scheduler.
+    const branding = {
+      title:    settingStr(settings, 'report_title', ''),
+      subtitle: settingStr(settings, 'report_subtitle', ''),
+      footer:   settingStr(settings, 'report_footer', ''),
+    };
 
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
-    const { html, text } = buildDetailedReport(data, stats, reportLang, workStart, workEnd, detectLate, startDate, endDate);
+    const { html, text, report } = buildDetailedReport(
+      data, stats, reportLang, workStart, workEnd, detectLate, startDate, endDate, 0, companyName, branding,
+    );
 
     const transporter = nodemailer.createTransport({
       host: smtp.host, port: smtp.port,
@@ -312,9 +325,31 @@ export async function testReportEmail(req, res) {
 
     const recipientsList = recipients.split(',').map(r => r.trim()).filter(Boolean);
     // Use professional Indonesian date format
+    const subjectSuffix = companyName ? ` — ${companyName}` : '';
     const subject = lang === 'id'
-      ? `Laporan Absensi — TEST — ${fmtDateLong(startDate)}`
-      : `Attendance Report — TEST — ${fmtDateLong(startDate)}`;
+      ? `Laporan Absensi${subjectSuffix} — TEST — ${fmtDateLong(startDate)}`
+      : `Attendance Report${subjectSuffix} — TEST — ${fmtDateLong(startDate)}`;
+
+    // ─── Lampiran PDF ───────────────────────────────────────────────────────
+    //
+    // Tombol "Kirim Laporan Uji" di Pengaturan sekarang juga mengirim PDF
+    // laporan sebagai lampiran — sama seperti laporan yang sebenarnya
+    // dikirim lewat scheduler / halaman Laporan.
+    //
+    // Ini penting supaya user bisa memverifikasi SEBELUM mengatur jadwal:
+    // apakah email masuk, apakah PDF-nyaattach, apakah judulnya custom.
+    const attachments = [];
+    try {
+      const pdfBuffer = await pdfToBuffer(report, reportLang);
+      attachments.push({
+        filename: `laporan-absensi-test-${startDate}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      });
+    } catch (pdfErr) {
+      // Lampiran gagal → email tetap dikirim (HTML sudah lengkap).
+      console.error('[settings/test-report] Gagal membuat lampiran PDF:', pdfErr.message);
+    }
 
     await transporter.sendMail({
       from: smtp.from || smtp.user,
@@ -322,9 +357,15 @@ export async function testReportEmail(req, res) {
       subject,
       html,
       text,
+      attachments,
     });
 
-    res.json({ success: true, message: `Laporan test terkirim ke ${recipientsList.length} penerima`, stats });
+    res.json({
+      success: true,
+      message: `Laporan test terkirim ke ${recipientsList.length} penerima`,
+      attachments: attachments.map((a) => ({ filename: a.filename, size: a.content.length })),
+      stats,
+    });
   } catch (err) {
     console.error('[settings/test-report]', err);
     res.status(500).json({ error: err.message });

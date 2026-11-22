@@ -1,7 +1,7 @@
 // Report controller — email, WhatsApp preview, export, and HTML preview endpoints
 import nodemailer from 'nodemailer';
 import { dateKey, dayOfWeek, dayOfWeekShort, fmtDateLong, fmtDateLongLang, fmtDateShort, fmtDateShortLang, fmtDateTimeFull, fmtDateTimeIndonesia, fmtDateTimeLang, fmtTime, fmtWIBShort, isValidDateStr, nowWIB, wibRangeToUtc } from '../utils/time.js';
-import { buildDetailedReport, buildExportReport } from '../services/reportService.js';
+import { buildDetailedReport, buildExportReport, pdfToBuffer, reportTitle } from '../services/reportService.js';
 import { syncRangeToDb, checkRangeCoverage } from '../services/attendanceSyncService.js';
 import { loadSettingsMap, settingStr, settingBool, settingInt, resolveSmtpConfig } from '../services/settingsService.js';
 import prisma from '../db.js';
@@ -251,8 +251,27 @@ async function resolveReportParams(query = {}) {
   // Bahasa laporan default dari Pengaturan dipakai bila query tidak menyebut
   // `lang`. SEBELUMNYA setting `report_lang` tidak pernah dibaca server —
   // user memilih "English" di Pengaturan tapi laporan tetap mengikuti env.
-  const lang = query.lang || settingStr(map, 'report_lang', '') || process.env.REPORT_DEFAULT_LANG || 'en';
-  return { workStart, workEnd, detectLate, toleranceMinutes, companyName, lang };
+  // Bahasa default: `report_lang` (Pengaturan) → env `REPORT_DEFAULT_LANG` →
+  // 'id'.
+  //
+  // SEBELUMNYA fallback-nya 'en', sedangkan scheduler memakai 'id'. Dua kanal
+  // laporan default-nya berbeda — laporan yang dikirim email bisa berbahasa
+  // Inggris sementara yang dikirim WhatsApp berbahasa Indonesia, untuk
+  // periode yang sama.
+  const lang = query.lang || settingStr(map, 'report_lang', '') || process.env.REPORT_DEFAULT_LANG || 'id';
+
+  // Branding laporan: judul, subjudul, footer custom dari Pengaturan → Umum.
+  //
+  // SEBELUMNYA ketiga setting ini TIDAK PERNAH dibaca — user mengisinya di
+  // form, klik Simpan, lihat "sukses", lalu tidak ada yang berubah di laporan.
+  // Sekarang dibaca di sini dan diteruskan ke builder laporan.
+  const branding = {
+    title:    settingStr(map, 'report_title', ''),
+    subtitle: settingStr(map, 'report_subtitle', ''),
+    footer:   settingStr(map, 'report_footer', ''),
+  };
+
+  return { workStart, workEnd, detectLate, toleranceMinutes, companyName, lang, branding };
 }
 
 // ─── GET /api/report/preview ────────────────────────────────────────────────────
@@ -275,13 +294,13 @@ export async function getReportPreview(req, res) {
       return res.status(400).json({ error: 'Format tanggal harus YYYY-MM-DD (mis. 2026-11-10).' });
     }
 
-    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, lang } =
+    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, companyName, lang, branding } =
       await resolveReportParams({ ...req.query, lang: langParam });
 
     await ensureRangeSynced(startDate, endDate);
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
     const { html } = buildDetailedReport(
-      data, stats, lang, workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes,
+      data, stats, lang, workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding,
     );
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -322,13 +341,13 @@ export async function sendReportEmail(req, res) {
       return res.status(400).json({ error: 'Tidak ada penerima laporan. Atur REPORT_DEFAULT_RECIPIENTS di .env atau isi kolom penerima.' });
     }
 
-    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, companyName, lang } =
+    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, companyName, lang, branding } =
       await resolveReportParams({ ...req.query, lang: langParam });
 
     await ensureRangeSynced(startDate, endDate);
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
-    const { html, text } = buildDetailedReport(
-      data, stats, lang, workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes,
+    const { html, text, report } = buildDetailedReport(
+      data, stats, lang, workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding,
     );
 
     const smtp = await resolveSmtpConfig();
@@ -337,10 +356,14 @@ export async function sendReportEmail(req, res) {
     // Subjek email mengikuti bahasa laporan (bukan hardcoded English) dan
     // menyertakan nama perusahaan dari Pengaturan bila diisi.
     const subjDate = `${fmtDateShortLang(startDate, lang)} - ${fmtDateShortLang(endDate, lang)}`;
-    const companySuffix = companyName ? ` - ${companyName}` : '';
-    const subject = lang === 'id'
-      ? `Laporan Absensi${companySuffix} - ${subjDate}`
-      : `Attendance Report${companySuffix} - ${subjDate}`;
+    // Subjek memakai judul yang SAMA dengan isi laporan. SEBELUMNYA subjek
+    // selalu "Laporan Absensi - <company>" walau judul PDF-nya custom.
+    const titleText = reportTitle(
+      lang, companyName,
+      lang === 'id' ? 'Laporan Absensi' : 'Attendance Report',
+      branding.title,
+    );
+    const subject = `${titleText} - ${subjDate}`;
 
     const sentToLabel = lang === 'id' ? 'Dikirim kepada' : 'Sent to';
     const htmlWithMeta = html.replace('</body>', `
@@ -350,21 +373,56 @@ export async function sendReportEmail(req, res) {
   </p>
 </div></body>`);
 
+    // ─── Attachment PDF ───────────────────────────────────────────────────────
+    //
+    // FEATUR: laporan PDF bisa dilampirkan ke email, bukan cuma HTML di body.
+    //
+    // ALASAN: penerima sering mau menyimpan/mencetak laporan. Selama ini
+    // email hanya berisi HTML — harus scroll panjang atau cetak manual
+    // dari browser. Dengan lampiran PDF, file bisa langsung dibuka & diarsipkan.
+    //
+    // Diaktifkan dengan query `attach=pdf` (atau `attach=1` / `attach=true`).
+    // Tanpa parameter itu, email tetap hanya berisi HTML — supaya perilaku
+    // lama tidak berubah diam-diam untuk pemanggil lain.
+    //
+    // `pdfToBuffer` memakai objek `report` yang SAMA dengan HTML — jadi
+    // angka di PDF dan HTML dijamin identik.
+    const attachParam = String(req.query?.attach || '').trim().toLowerCase();
+    const wantAttachment = ['pdf', '1', 'true', 'yes'].includes(attachParam);
+
+    const attachments = [];
+    if (wantAttachment) {
+      try {
+        const pdfBuffer = await pdfToBuffer(report, lang);
+        attachments.push({
+          filename: `laporan-absensi-${startDate}-${endDate}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      } catch (pdfErr) {
+        // Lampiran PDF gagal → email tetap dikirim (HTML-nya sudah lengkap).
+        // Kegagalan attachment tidak boleh membuat laporan hilang total.
+        console.error('[report/email] Gagal membuat lampiran PDF:', pdfErr.message);
+      }
+    }
+
     await transporter.sendMail({
       from:    smtp.from || smtp.user,
       to:      recipientsList.join(', '),
       subject,
       html:    htmlWithMeta,
       text,
+      attachments,
     });
 
-    console.log(`[report/email] Sent to ${recipientsList.join(', ')} | period: ${startDate}–${endDate} | lang: ${lang}`);
+    console.log(`[report/email] Sent to ${recipientsList.join(', ')} | period: ${startDate}–${endDate} | lang: ${lang} | attachments: ${attachments.length}`);
     res.json({
       success: true,
       message: lang === 'id'
         ? `Laporan absensi terkirim ke ${recipientsList.length} penerima`
         : `Report email sent to ${recipientsList.length} recipient(s)`,
       recipients: recipientsList,
+      attachments: attachments.map((a) => ({ filename: a.filename, size: a.content.length })),
       stats,
     });
   } catch (err) {
@@ -399,14 +457,14 @@ export async function getReportExport(req, res) {
       return res.status(400).json({ error: `format must be one of: ${validFormats.join(', ')}` });
     }
 
-    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, lang } =
+    const { workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes, companyName, lang, branding } =
       await resolveReportParams({ ...req.query, lang: langParam });
 
     await ensureRangeSynced(startDate, endDate);
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
 
     if (format === 'excel') {
-      const wb = buildExportReport(data, stats, lang, 'excel', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes);
+      const wb = buildExportReport(data, stats, lang, 'excel', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
       const filename = `attendance-report-${startDate}-${endDate}.xlsx`;
 
       // Mode 'base64' — lihat catatan pada cabang 'pdf' di bawah.
@@ -432,7 +490,7 @@ export async function getReportExport(req, res) {
     }
 
     if (format === 'pdf') {
-      const doc = buildExportReport(data, stats, lang, 'pdf', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes);
+      const doc = buildExportReport(data, stats, lang, 'pdf', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
       const filename = `attendance-report-${startDate}-${endDate}.pdf`;
 
       // Mode 'base64' mengirim PDF sebagai JSON. Dipakai sebagai fallback
@@ -457,7 +515,7 @@ export async function getReportExport(req, res) {
     }
 
     // HTML — return as downloadable file
-    const { html } = buildExportReport(data, stats, lang, 'html', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes);
+    const { html } = buildExportReport(data, stats, lang, 'html', workStart, workEnd, isLateEnabled, startDate, endDate, toleranceMinutes, companyName, branding);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="attendance-report-${startDate}-${endDate}.html"`);
     res.send(html);
@@ -477,7 +535,7 @@ export async function sendReportWhatsApp(req, res) {
       startDate,
       endDate,
       recipients: recipientsParam,
-      lang = process.env.REPORT_DEFAULT_LANG || 'en',
+      lang = process.env.REPORT_DEFAULT_LANG || 'id',
     } = req.query;
 
     if (!startDate || !endDate) {
@@ -490,6 +548,17 @@ export async function sendReportWhatsApp(req, res) {
     }
 
     const language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en';
+
+    // Nama perusahaan & branding dipakai di caption dokumen WhatsApp.
+    //
+    // Parameter laporan (jam kerja, deteksi terlambat, toleransi) ikut
+    // diambil dari Pengaturan — SEBELUMNYA jalur WhatsApp memakai
+    // hardcode '09:00'/'17:00'/true/0, jadi PDF yang dikirim ke WhatsApp
+    // punya angka berbeda dari email untuk periode yang sama.
+    const {
+      workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes,
+      companyName, branding, lang: resolvedLang,
+    } = await resolveReportParams({ ...req.query, lang: language });
 
     // Nomor default WhatsApp dari Pengaturan dipakai bila parameter
     // `recipients` tidak diberikan. SEBELUMNYA setting `wa_default_to` tidak
@@ -512,7 +581,17 @@ export async function sendReportWhatsApp(req, res) {
     const { data, stats } = await fetchAttendanceData(startDate, endDate);
 
     // Pesan WhatsApp mengikuti bahasa laporan (bukan hardcoded Indonesia).
-    const waTitle    = language === 'id' ? 'LAPORAN ABSENSI' : 'ATTENDANCE REPORT';
+    //
+    // Judul memakai branding yang SAMA dengan isi laporan — kalau judulnya
+    // custom ("Rekap Bulanan"), isi WhatsApp juga ikut custom.
+    //
+    // SEBELUMNYA: `waTitle` selalu "LAPORAN ABSENSI"/"ATTENDANCE REPORT" —
+    // judul custom di PDF tidak muncul di ringkasan WhatsApp.
+    const waTitle    = reportTitle(
+      language, companyName,
+      language === 'id' ? 'LAPORAN ABSENSI' : 'ATTENDANCE REPORT',
+      branding.title,
+    ).toUpperCase();
     const waPeriod   = language === 'id' ? 'Periode' : 'Period';
     const waSummary  = language === 'id' ? 'RINGKASAN' : 'SUMMARY';
     const waTotalEv  = language === 'id' ? 'Total Kejadian' : 'Total Events';
@@ -521,14 +600,29 @@ export async function sendReportWhatsApp(req, res) {
     const waUnique   = language === 'id' ? 'Karyawan Unik' : 'Unique Employees';
     const waDays     = language === 'id' ? 'Hari Kerja' : 'Working Days';
     const waGen      = language === 'id' ? 'Dibuat' : 'Generated';
-    const waFooter   = language === 'id'
+    // Footer pesan WhatsApp memakai branding custom bila diisi — sama seperti
+    // footer di PDF/HTML/Excel/Teks.
+    //
+    // SEBELUMNYA footer WhatsApp selalu "Sistem Absensi Fingerprint", walau
+    // footer di laporan PDF sudah custom → isi dan footer tidak konsisten
+    // antar kanal.
+    const waFooter   = branding.footer || (language === 'id'
       ? 'Sistem Absensi Fingerprint'
-      : 'Fingerprint Attendance System';
+      : 'Fingerprint Attendance System');
+
+    // Nama perusahaan (bila diisi) ikut tampil di ringkasan WhatsApp —
+    // supaya penerima langsung tahu laporan ini dari perusahaan mana.
+    const waCompanyLine = companyName
+      ? (language === 'id' ? `🏢 ${companyName}` : `🏢 ${companyName}`)
+      : '';
 
     // Build WhatsApp text (short, mobile-friendly)
     const lines = [
+      // Judul branding sudah termasuk nama perusahaan (bila ada), jadi
+      // tidak perlu ditambahkan lagi di sini.
       `*📋 ${waTitle}*`,
       `─────────────────`,
+      ...(waCompanyLine ? [waCompanyLine] : []),
       `📅 ${waPeriod}: ${fmtDateLongLang(startDate, language)} s/d ${fmtDateLongLang(endDate, language)}`,
       ``,
       `*📊 ${waSummary}*`,
@@ -545,6 +639,41 @@ export async function sendReportWhatsApp(req, res) {
 
     const whatsappText = lines.join('\n');
 
+    // ─── Lampiran PDF (opsional) ──────────────────────────────────────────────
+    //
+    // FEATUR: PDF laporan ikut dikirim sebagai dokumen WhatsApp, bukan cuma
+    // ringkasan teks.
+    //
+    // Diaktifkan dengan query `attach=pdf` (atau `attach=1` / `attach=true`).
+    // Default TIDAK aktif supaya pesan tetap ringan — WhatsApp membatasi
+    // ukuran dokumen (~16 MB) dan PDF laporan 30 hari bisa cukup besar.
+    //
+    // Cara ini dipakai juga oleh scheduler saat kanal = 'whatsapp'.
+    const attachParam = String(req.query?.attach || '').trim().toLowerCase();
+    const wantAttachment = ['pdf', '1', 'true', 'yes'].includes(attachParam);
+
+    let pdfAttachment = null;
+    if (wantAttachment) {
+      try {
+        // Objek report yang SAMA dipakai untuk HTML — angka dijamin identik.
+        const { report } = buildDetailedReport(
+          data, stats, language, workStart, workEnd, isLateEnabled,
+          startDate, endDate, toleranceMinutes, companyName, branding,
+        );
+        const pdfBuffer = await pdfToBuffer(report, language);
+        pdfAttachment = {
+          buffer: pdfBuffer,
+          filename: `laporan-absensi-${startDate}-${endDate}.pdf`,
+          mimetype: 'application/pdf',
+        };
+      } catch (pdfErr) {
+        // Lampiran gagal → teks ringkasan tetap dikirim. Kegagalan attachment
+        // tidak boleh membuat laporan hilang total.
+        console.error('[report/whatsapp] Gagal membuat lampiran PDF:', pdfErr.message);
+        pdfAttachment = null;
+      }
+    }
+
     // Kirim pesan melalui service WhatsApp (OpenWA gateway atau Baileys).
     //
     // SEBELUMNYA endpoint ini HANYA membangun teks dan mengembalikanannya —
@@ -555,10 +684,33 @@ export async function sendReportWhatsApp(req, res) {
     const results = [];
     for (const recipient of recipientsList) {
       try {
-        const sent = await whatsappService.sendMessage(recipient, whatsappText);
+        let sent;
+
+        if (pdfAttachment) {
+          // Kirim ringkasan teks DULU, lalu dokumen PDF-nya.
+          //
+          // Dua pesan terpisah lebih aman daripada satu pesan dengan
+          // caption: kalau PDF terlalu besar / ditolak gateway, ringkasan
+          // teksnya sudah sampai.
+          const textSent = await whatsappService.sendMessage(recipient, whatsappText);
+          sent = await whatsappService.sendDocument(
+            recipient,
+            pdfAttachment.buffer,
+            pdfAttachment.filename,
+            pdfAttachment.mimetype,
+            language === 'id'
+              ? `Laporan absensi ${fmtDateLongLang(startDate, language)} s/d ${fmtDateLongLang(endDate, language)}`
+              : `Attendance report ${fmtDateLongLang(startDate, language)} to ${fmtDateLongLang(endDate, language)}`,
+          );
+          sent = sent || textSent;
+        } else {
+          sent = await whatsappService.sendMessage(recipient, whatsappText);
+        }
+
         results.push({
           to: recipient,
           ok: true,
+          withAttachment: !!pdfAttachment,
           messageId: sent?.messageId || sent?.key?.id || sent?.id?._serialized || null,
         });
       } catch (err) {

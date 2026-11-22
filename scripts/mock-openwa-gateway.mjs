@@ -28,6 +28,9 @@ const sessions = new Map(); // id -> session
 const webhooks = new Map(); // webhookId -> webhook
 let seq = 0;
 let lastSend = null; // payload pesan terakhir — dipakai uji integrasi
+// Dokumen terakhir yang dikirim lewat `send-document` — dipakai uji integrasi
+// untuk MEMBUKTIKAN file PDF benar-benar sampai ke gateway (bukan cuma teks).
+let lastDocument = null;
 const deliveries = []; // riwayat delivery yang dikirim mock
 // Dead-letter log: delivery yang GAGAL (status non-2xx atau error jaringan).
 // Diisi otomatis saat `deliver()` gagal, lalu dibaca lewat
@@ -205,6 +208,54 @@ const server = http.createServer((req, res) => {
       console.log('[MOCK] send-text →', payload.chatId, '|', payload.text.slice(0, 40).replace(/\n/g, ' '));
       lastSend = { chatId: payload.chatId, text: payload.text, at: new Date().toISOString() };
       return json(201, { messageId: 'mock-msg-' + (++seq), timestamp: new Date().toISOString() });
+    }
+
+    // ── POST /api/sessions/:id/messages/send-document ──────────────────────
+    //
+    // Endpoint ini WAJIB ada untuk menguji pengiriman laporan PDF sebagai
+    // dokumen WhatsApp. Tanpa endpoint ini, jalur `whatsappService.sendDocument()`
+    // tidak pernah bisa dibuktikan bekerja.
+    //
+    // Kontrak OpenWA: dokumen dikirim lewat field `base64` (atau `url`),
+    // plus `filename` + `mimetype`, dan `caption` opsional.
+    m = path.match(/^\/api\/sessions\/([^/]+)\/messages\/send-document$/);
+    if (m && req.method === 'POST') {
+      const s = sessions.get(m[1]);
+      if (!s) return json(404, { statusCode: 404, message: 'not found', error: 'Not Found' });
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch { /* noop */ }
+      if (!isValidChatId(payload.chatId)) {
+        return json(400, {
+          statusCode: 400,
+          message: 'chatId must be a valid chat JID in the form localpart@host',
+          error: 'Bad Request',
+        });
+      }
+      const hasBase64 = typeof payload.base64 === 'string' && payload.base64.length > 0;
+      const hasUrl = typeof payload.url === 'string' && payload.url.length > 0;
+      if (!hasBase64 && !hasUrl) {
+        return json(400, {
+          statusCode: 400,
+          message: 'base64 or url is required',
+          error: 'Bad Request',
+        });
+      }
+      const buf = hasBase64
+        ? Buffer.from(payload.base64, 'base64')
+        : Buffer.from('');
+      console.log('[MOCK] send-document →', payload.chatId, '|', payload.filename || '(tanpa nama)',
+        '|', buf.length, 'bytes');
+      lastDocument = {
+        chatId: payload.chatId,
+        filename: payload.filename || '',
+        mimetype: payload.mimetype || 'application/octet-stream',
+        caption: payload.caption || '',
+        size: buf.length,
+        // Magic bytes 4 byte pertama — dipakai assertion "%PDF".
+        magic: buf.subarray(0, 4).toString('latin1'),
+        at: new Date().toISOString(),
+      };
+      return json(201, { messageId: 'mock-doc-' + (++seq), timestamp: new Date().toISOString() });
     }
 
     // ── Helper uji: tandai sesi sebagai ready ─────────────────────────────
@@ -404,6 +455,13 @@ const server = http.createServer((req, res) => {
     // ── Helper uji: pesan terakhir yang dikirim ───────────────────────────
     if (path === '/__mock/last-send' && req.method === 'GET') {
       return json(200, lastSend || {});
+    }
+
+    // ── Helper uji: dokumen terakhir yang dikirim ──────────────────────────
+    // Dipakai uji integrasi untuk MEMBUKTIKAN file PDF benar-benar terkirim
+    // sebagai dokumen (bukan cuma ringkasan teks).
+    if (path === '/__mock/last-document' && req.method === 'GET') {
+      return json(200, lastDocument || {});
     }
 
     if (path === '/api/health') return json(200, { status: 'ok' });

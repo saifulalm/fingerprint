@@ -410,6 +410,52 @@ function txt(lang, key) {
   return T[lang]?.[key] ?? T.en[key] ?? key;
 }
 
+// ─── Escape HTML untuk teks dari Pengaturan ────────────────────────────────────
+//
+// Judul/subjudul/footer laporan berasal dari input user (Pengaturan → Umum).
+// Tanpa escape, teks seperti "<script>alert(1)</script>" akan dieksekusi saat
+// laporan HTML dibuka di browser (pratinjau + email).
+//
+// Yang perlu di-escape HANYA teks yang masuk ke markup HTML. PDFKit dan
+// ExcelJS aman secara bawaan — keduanya meloloskan karakter sebagai data,
+// bukan sebagai markup.
+//
+// @param {unknown} s nilai apa pun
+// @returns {string} teks yang aman disisipkan ke HTML
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// ─── Branding laporan (sumber tunggal untuk semua format) ──────────────────────
+//
+// Judul, subjudul, dan footer berasal dari Pengaturan → Umum. Semua format
+// (PDF, HTML, Excel, Teks) WAJIB memakai objek yang sama supaya judulnya
+// dijamin identik — kalau tiap format punya salinan logikanya sendiri, satu
+// format bisa diam-diam menyimpang (bug class "format berbeda menampilkan
+// judul berbeda").
+//
+// Urutan sumber judul (yang pertama terisi menang):
+//   1. `report_title`    → "Judul Laporan"
+//   2. judul bawaan      → "Laporan Absensi" / "Attendance Report"
+// lalu nama perusahaan ditambahkan: "Laporan Absensi — PT Guard Test"
+//
+// Subjudul & footer bersifat opsional. Kalau kosong, teks bawaan (periode /
+// "Dibuat oleh Sistem Absensi Fingerprint") tetap dipakai.
+//
+// @param {string} companyName nama perusahaan dari Pengaturan
+// @param {{title?:string, subtitle?:string, footer?:string}} [branding]
+// @returns {{companyName:string,title:string,subtitle:string,footer:string}}
+export function buildBranding(companyName = '', branding = {}) {
+  return {
+    companyName: String(companyName || '').trim(),
+    title:       String(branding?.title || '').trim(),
+    subtitle:    String(branding?.subtitle || '').trim(),
+    footer:      String(branding?.footer || '').trim(),
+  };
+}
+
 function getDays(lang) {
   return lang === 'id' ? DAYS_ID : DAYS_EN;
 }
@@ -656,7 +702,15 @@ function buildHtml(report, lang) {
     workingDuration, scans, avgArrival, summaryOrg,
   } = T[lang];
 
-  const { startDate, endDate, generatedAt, stats, employees, days, verifyModes, events, workStart, detectLate = true, toleranceMinutes = 0, analytics } = report;
+  const { startDate, endDate, generatedAt, stats, employees, days, verifyModes, events, workStart, detectLate = true, toleranceMinutes = 0, analytics, companyName, branding } = report;
+
+  // Judul customized: "Laporan Absensi — PT Guard Test" bila nama
+  // perusahaan diisi di Pengaturan → Umum. Kalau `report_title` diisi, itu
+  // yang dipakai utuh (tidak ditambah nama perusahaan).
+  const br = branding || buildBranding(companyName);
+  const reportTitleText = reportTitle(lang, br.companyName, title, br.title);
+  // Subjudul opsional — kalau kosong, baris periode tetap menjadi subjudul.
+  const subtitleText = br.subtitle;
 
   const l = lang;
   const rows = (arr, render) => arr.map(render).join('');
@@ -672,7 +726,7 @@ function buildHtml(report, lang) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title} - ${startDate} / ${endDate}</title>
+<title>${escHtml(reportTitleText)} - ${startDate} / ${endDate}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; background: #f1f5f9; color: #1e293b; font-size: 13px; }
@@ -680,6 +734,7 @@ function buildHtml(report, lang) {
   .header { background: linear-gradient(135deg, #1e40af, #3b82f6); color: #fff; padding: 28px 32px; }
   .header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
   .header p { opacity: 0.85; font-size: 13px; }
+  .header .subtitle { font-size: 13px; font-style: italic; opacity: 0.9; margin-bottom: 4px; }
   .header .meta { margin-top: 12px; display: flex; gap: 24px; font-size: 12px; opacity: 0.9; }
   .summary-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; padding: 20px 24px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
   .stat-card { background: #fff; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
@@ -723,7 +778,8 @@ function buildHtml(report, lang) {
 <div class="container">
 
   <div class="header">
-    <h1>${title}</h1>
+    <h1>${escHtml(reportTitleText)}</h1>
+    ${subtitleText ? `<p class="subtitle">${escHtml(subtitleText)}</p>` : ''}
     <p>${period}: ${dLong(startDate)} — ${dLong(endDate)}</p>
     <div class="meta">
       <span>📅 ${generated}: ${fmtDateTimeLang(generatedAt, lang)} WIB</span>
@@ -926,7 +982,7 @@ function buildHtml(report, lang) {
     ` : `<div class="no-data">${noData}</div>`}
   </div>
 
-  <div class="footer">${footer}</div>
+  <div class="footer">${escHtml(br.footer || footer)}</div>
 </div>
 </body>
 </html>`;
@@ -943,7 +999,11 @@ function buildText(report, lang) {
     noData, footer, showingOf, of, directionIn, directionOut,
   } = T[lang];
 
-  const { startDate, endDate, generatedAt, stats, employees, days, verifyModes, events } = report;
+  const { startDate, endDate, generatedAt, stats, employees, days, verifyModes, events, companyName, branding } = report;
+
+  // Judul customized — sama dengan PDF & HTML.
+  const br = branding || buildBranding(companyName);
+  const reportTitleText = reportTitle(lang, br.companyName, title, br.title);
 
   const dLong = (dk) => fmtDateLongLang(dk, lang);
   const firstN = Math.min(100, events.length);
@@ -964,7 +1024,9 @@ function buildText(report, lang) {
     '  ' + cells.map((v, i) => (rightCols.includes(i) ? padR(v, w[i]) : pad(v, w[i]))).join(' ').replace(/\s+$/, '');
 
   const parts = [
-    line(`${title}`),
+    line(`${reportTitleText}`),
+    // Subjudul custom (opsional) — hanya tampil kalau diisi di Pengaturan.
+    ...(br.subtitle ? [line(br.subtitle)] : []),
     line(`${period}: ${dLong(startDate)} — ${dLong(endDate)}`),
     line(`${generated}: ${fmtDateTimeLang(generatedAt, lang)} WIB`),
     line(),
@@ -1033,14 +1095,84 @@ function buildText(report, lang) {
 
   parts.push(line());
   parts.push(line(hr()));
-  parts.push(line(footer));
+  parts.push(line(br.footer || footer));
 
   return parts.join('\n');
 }
 
-// ─── Main export ───────────────────────────────────────────────────────────────
-export function buildDetailedReport(data, stats, lang = 'en', workStart = '09:00', workEnd = '17:00', detectLate = true, reportStartDate = null, reportEndDate = null, toleranceMinutes = 0) {
-  const language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en';
+// ─── Judul laporan (dapat di-custom via Pengaturan → Umum) ───────────────────
+//
+// Urutan sumber judul (yang pertama Terisi menang):
+//
+//   1. `report_title`   → "Judul Laporan" di Pengaturan → Umum
+//   2. judul bawaan     → "Laporan Absensi" / "Attendance Report"
+//
+// Lalu nama perusahaan ditambahkan sebagai imbuhan bila `report_title`
+// tidak diisi:
+//
+//   company_name kosong                   → "LAPORAN ABSENSI"
+//   company_name = "PT Guard Test"        → "LAPORAN ABSENSI — PT GUARD TEST"
+//   report_title = "Rekap Bulanan"        → "REKAP BULANAN"
+//   report_title = "Rekap Bulanan" + PT   → "REKAP BULANAN — PT GUARD TEST"
+//
+// SEBELUMNYA judul selalu hardcoded "Laporan Absensi" di PDF, HTML, dan
+// Excel — nama perusahaan hanya muncul di subjek email. Jadi user tidak
+// bisa customize judul laporan sama sekali.
+//
+// @param {string} lang 'id' | 'en'
+// @param {string} companyName nama perusahaan dari Pengaturan
+// @param {string} fallback label judul default ('Laporan Absensi')
+// @param {string} [customTitle] judul custom dari Pengaturan
+// @returns {string}
+export function reportTitle(lang, companyName, fallback, customTitle = '') {
+  const base = String(customTitle || fallback || '').trim();
+  const company = String(companyName || '').trim();
+
+  // Judul custom = authoritative. Nama perusahaan tidak ditambahkan
+  // otomatis — user yang menentukan sendiri judulnya.
+  if (customTitle && String(customTitle).trim()) return base;
+
+  if (!company) return base;
+  return `${base} — ${company}`;
+}
+
+// ─── Helper: PDF sebagai Buffer (untuk attachment email/WhatsApp) ─────────────
+//
+// `buildExportReport(..., 'pdf')` mengembalikan PDFDocument (stream).
+// Untuk attachment, PDF harus jadi Buffer.
+//
+// PENTING: `doc.end()` harus dipanggil SEBELUM iterasi stream. Kalau tidak,
+// stream tidak pernah selesai dan proses hang.
+//
+// @param {object} report objek report hasil buildDetailedReport
+// @param {string} lang 'id' | 'en'
+// @returns {Promise<Buffer>}
+export async function pdfToBuffer(report, lang) {
+  const doc = buildPdfExport(report, lang);
+  const chunks = [];
+  doc.end();
+  for await (const chunk of doc) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+// ─── Bangun objek report (dipakai bersama semua format) ───────────────────────
+//
+// Ekstrak supaya HTML, Teks, Excel, dan PDF memakai DATA & ANALITIK YANG
+// SAMA. Sebelumnya tiap format punya salinan sendiri — saat satu format
+// berubah, format lain diam-diam menyimpang.
+//
+// @param {Array} data event enriched
+// @param {object} stats statistik mentah
+// @param {string} language 'id' | 'en'
+// @param {string} workStart
+// @param {string} workEnd
+// @param {boolean} detectLate
+// @param {string|null} reportStartDate
+// @param {string|null} reportEndDate
+// @param {number} toleranceMinutes
+// @param {string} companyName
+// @returns {object} objek report
+function buildReportObject(data, stats, language, workStart, workEnd, detectLate, reportStartDate, reportEndDate, toleranceMinutes, companyName, branding = {}) {
   const employees = aggregateByEmployee(data, language, workStart, detectLate, toleranceMinutes);
   const days      = aggregateByDay(data, language, workStart, detectLate, toleranceMinutes);
   const verifyModes = aggregateVerifyMode(data);
@@ -1064,10 +1196,28 @@ export function buildDetailedReport(data, stats, lang = 'en', workStart = '09:00
     ? reportEndDate
     : (sortedByTime[sortedByTime.length - 1]?.dateKey || sortedByTime[sortedByTime.length - 1]?.date || '-');
 
-  const report = {
+  return {
     startDate,
     endDate,
     generatedAt,
+    // Nama perusahaan dari Pengaturan → Umum. Dipakai sebagai judul
+    // laporan (PDF/HTML/Excel) supaya judulnya bisa di-custom, bukan
+    // hardcoded "Laporan Absensi".
+    //
+    // SEBELUMNYA: nama perusahaan hanya dipakai di subjek EMAIL. Judul
+    // laporan (PDF/HTML/Excel) selalu "Laporan Absensi" — user tidak bisa
+    // mengubahnya sama sekali.
+    companyName: String(companyName || '').trim(),
+    // Branding: judul, subjudul, dan footer custom dari Pengaturan → Umum.
+    //
+    // Dihitung SEKALI di sini lalu dipakai bersama oleh HTML, Teks, Excel,
+    // dan PDF — supaya judulnya dijamin identik di semua format.
+    //
+    // SEBELUMNYA: `report_title` / `report_subtitle` / `report_footer` sudah
+    // terdaftar di SETTINGS_KEYS (jadi API menerimanya) tapi TIDAK PERNAH
+    // dibaca di mana pun — user mengisinya, klik Simpan, lihat "sukses",
+    // lalu tidak ada yang berubah. Persis bug class "field mati".
+    branding: buildBranding(companyName, branding),
     // `uniqueDays` boleh hilang bila pemanggil tidak menyediakannya (mis. probe
     // sintetis). Fallback ke jumlah hari aktual supaya kartu statistik tidak
     // menampilkan "undefined".
@@ -1087,49 +1237,46 @@ export function buildDetailedReport(data, stats, lang = 'en', workStart = '09:00
       startDate, endDate, detectLate,
     }),
   };
+}
+
+// ─── Main export ───────────────────────────────────────────────────────────────
+export function buildDetailedReport(data, stats, lang = 'en', workStart = '09:00', workEnd = '17:00', detectLate = true, reportStartDate = null, reportEndDate = null, toleranceMinutes = 0, companyName = '', branding = {}) {
+  const language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en';
+
+  const report = buildReportObject(
+    data, stats, language, workStart, workEnd, detectLate,
+    reportStartDate, reportEndDate, toleranceMinutes, companyName, branding,
+  );
 
   return {
     html:  buildHtml(report, language),
     text:  buildText(report, language),
+    // Objek report ikut dikembalikan supaya pemanggil (mis. controller
+    // email) bisa membangun PDF attachment TANPA menghitung ulang agregasi.
+    //
+    // SEBELUMNYA objek report tidak dikembalikan, jadi attachment PDF harus
+    // memanggil buildExportReport() lagi — yang berarti agregasi dihitung
+    // dua kali (boros) dan bisa menghasilkan angka sedikit berbeda bila
+    // data berubah di tengah.
+    report,
   };
 }
 
 // ─── Export: Excel / PDF / HTML ─────────────────────────────────────────────────
 // Main export function that delegates to format-specific builders
-export function buildExportReport(data, stats, lang = 'en', format = 'html', workStart = '09:00', workEnd = '17:00', detectLate = true, reportStartDate = null, reportEndDate = null, toleranceMinutes = 0) {
+export function buildExportReport(data, stats, lang = 'en', format = 'html', workStart = '09:00', workEnd = '17:00', detectLate = true, reportStartDate = null, reportEndDate = null, toleranceMinutes = 0, companyName = '', branding = {}) {
   const language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en';
-  const employees = aggregateByEmployee(data, language, workStart, detectLate, toleranceMinutes);
-  const days      = aggregateByDay(data, language, workStart, detectLate, toleranceMinutes);
-  const verifyModes = aggregateVerifyMode(data);
-  const generatedAt = new Date().toISOString();
 
-  // Data is ordered desc by time (newest first), so we need to reverse to get chronological order
-  const sortedByTime = [...data].sort((a, b) => {
-    const timeA = a.time || a.timeFormatted || '';
-    const timeB = b.time || b.timeFormatted || '';
-    return timeA.localeCompare(timeB);
-  });
-
-  // Validate and format dates - ensure we have valid YYYY-MM-DD strings
-  const isValidDate = (d) => d && typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
-
-  // Use submitted dates if provided and valid, otherwise derive from data
-  const startDate = isValidDate(reportStartDate)
-    ? reportStartDate
-    : (sortedByTime[0]?.dateKey || sortedByTime[0]?.date || '-');
-  const endDate = isValidDate(reportEndDate)
-    ? reportEndDate
-    : (sortedByTime[sortedByTime.length - 1]?.dateKey || sortedByTime[sortedByTime.length - 1]?.date || '-');
-
-  const report = { startDate, endDate, generatedAt, stats: { uniqueDays: days.length, ...stats }, employees, days, verifyModes, events: data, workStart, workEnd, detectLate, toleranceMinutes,
-    analytics: buildAnalytics(data, stats, language, workStart, workEnd, {
-      startDate, endDate, detectLate,
-    }),
-  };
+  // Pakai builder yang sama dengan buildDetailedReport → semua format
+  // dijamin memakai data & analitik yang identik.
+  const report = buildReportObject(
+    data, stats, language, workStart, workEnd, detectLate,
+    reportStartDate, reportEndDate, toleranceMinutes, companyName, branding,
+  );
 
   if (format === 'excel') return buildExcelExport(report, language);
   if (format === 'pdf')   return buildPdfExport(report, language);
-  return { html: buildHtml(report, language), text: buildText(report, language) };
+  return { html: buildHtml(report, language), text: buildText(report, language), report };
 }
 
 // ─── Excel export ───────────────────────────────────────────────────────────────
@@ -1139,7 +1286,10 @@ function buildExcelExport(report, lang) {
   wb.created   = new Date();
   wb.modified  = new Date();
 
-  const { startDate, endDate, stats, employees, days, verifyModes, events, workStart, detectLate = true, toleranceMinutes = 0 } = report;
+  const { startDate, endDate, stats, employees, days, verifyModes, events, workStart, detectLate = true, toleranceMinutes = 0, companyName, branding } = report;
+
+  // Branding: sumber tunggal judul/subjudul/footer — sama dengan format lain.
+  const br = branding || buildBranding(companyName);
 
   // Styles
   const titleStyle = {
@@ -1187,18 +1337,26 @@ function buildExcelExport(report, lang) {
 
   ws1.mergeCells('A1:D1');
   Object.assign(ws1.getCell('A1'), {
-    value: `${lbl('title')} — ${lbl('summary').toUpperCase()}`,
+    value: `${reportTitle(lang, br.companyName, lbl('title'), br.title)} — ${lbl('summary').toUpperCase()}`,
     ...titleStyle,
   });
   ws1.getRow(1).height = 36;
 
-  ws1.mergeCells('A2:D2');
-  Object.assign(ws1.getCell('A2'), {
+  // Subjudul custom (opsional) — baris tersendiri di bawah judul.
+  if (br.subtitle) {
+    ws1.mergeCells('A2:D2');
+    Object.assign(ws1.getCell('A2'), { value: br.subtitle, ...subStyle });
+    ws1.getRow(2).height = 18;
+  }
+
+  const subRow = br.subtitle ? 3 : 2;
+  ws1.mergeCells(`A${subRow}:D${subRow}`);
+  Object.assign(ws1.getCell(`A${subRow}`), {
     value: `${lbl('period')}: ${dLong(startDate)} — ${dLong(endDate)}`,
     ...subStyle,
   });
-  ws1.getRow(2).height = 18;
-  ws1.getRow(3).height = 8;
+  ws1.getRow(subRow).height = 18;
+  ws1.getRow(subRow + 1).height = 8;
 
   const summaryRows = [
     [lbl('totalEvents'),     stats.totalEvents,  lbl('totalMasuk'),     stats.totalMasuk],
@@ -1219,7 +1377,20 @@ function buildExcelExport(report, lang) {
   });
 
   // Summary sheet bottom — verify mode counts
-  let summaryRowStart = 5;
+  //
+  // PENTING: posisi baris dihitung DINAMIS dari `ws1.rowCount`, bukan
+  // hardcoded.
+  //
+  // SEBELUMNYA `summaryRowStart = 5` di-hardcode, padahal 3 baris ringkasan
+  // di-`addRow()` (baris 4, 5, 6). Header "Mode Verifikasi" lalu ditulis ke
+  // baris 5 dan MENIMPA baris "Karyawan Unik" — nilainya hilang dari
+  // laporan. Terbukti lewat probe: baris 5 menampilkan "Mode Verifikasi |
+  // Total | Total Keluar | 1" (nilai "Karyawan Unik" hilang).
+  //
+  // Dengan subtitle custom, baris additionally bergeser — jadi posisi
+  // hardcoded pasti salah. `ws1.rowCount + 1` selalu menunjuk baris kosong
+  // pertama di bawah isi terakhir.
+  const summaryRowStart = ws1.rowCount + 1;
   ws1.getCell(`A${summaryRowStart}`).value = lbl('verifyMode');
   Object.assign(ws1.getCell(`A${summaryRowStart}`), { font: { bold: true, size: 11 }, fill: rowFill(0), border: borderThin });
   ws1.getCell(`B${summaryRowStart}`).value = lbl('total');
@@ -1241,8 +1412,14 @@ function buildExcelExport(report, lang) {
   const totalLate = employees.reduce((s, e) => s + (e.lateCount || 0), 0);
   const totalOntime = employees.reduce((s, e) => s + (e.ontimeCount || 0), 0);
   const totalLateMins = employees.reduce((s, e) => s + (e.lateMinutesTotal || 0), 0);
-  const vmRowOffset = verifyModes.length + 1;
-  const lateStart = summaryRowStart + vmRowOffset + 2;
+  // Baris "Terlambat" diletakkan 2 baris di bawah baris mode verifikasi
+  // terakhir (1 baris kosong sebagai pemisah).
+  //
+  // SEBELUMNYA dihitung dari `summaryRowStart + verifyModes.length + 1 + 2`,
+  // padahal baris mode verifikasi juga ditulis lewat `addRow()` — jadi
+  // posisi hardcoded itu meleset. Sekarang memakai `ws1.rowCount` yang
+  // selalu mencerminkan isi sebenarnya.
+  const lateStart = ws1.rowCount + 2;
   ws1.getCell(`A${lateStart}`).value = lbl('lateArrival');
   Object.assign(ws1.getCell(`A${lateStart}`), { font: { bold: true, size: 11 }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } }, border: borderThin });
   ws1.getCell(`B${lateStart}`).value = totalLate;
@@ -1260,6 +1437,17 @@ function buildExcelExport(report, lang) {
 
   ws1.getCell(`A${lateStart + 3}`).value = `${lbl('workSchedule')}: ${LATE_THRESHOLD_HOURS} WIB`;
   Object.assign(ws1.getCell(`A${lateStart + 3}`), { font: { italic: true, size: 10, color: { argb: 'FF64748B' } }, fill: rowFill(0), border: borderThin });
+
+  // Footer custom (opsional) — sama seperti footer di PDF/HTML/Teks.
+  // Kalau kosong, footer bawaan ("Dibuat oleh Sistem Absensi Fingerprint")
+  // yang dipakai supaya barisnya tidak hilang sama sekali.
+  const footerRow = lateStart + 5;
+  ws1.mergeCells(`A${footerRow}:D${footerRow}`);
+  ws1.getCell(`A${footerRow}`).value = br.footer || lbl('footer');
+  Object.assign(ws1.getCell(`A${footerRow}`), {
+    font:   { italic: true, size: 9, color: { argb: 'FF94A3B8' } },
+    align:  { horizontal: 'center' },
+  });
 
   ws1.views = [{ state: 'frozen', xSplit: 0, ySplit: 3 }];
 
@@ -1672,7 +1860,7 @@ function drawPdfTable(doc, opts) {
  * Bangun PDF laporan absensi yang profesional.
  */
 function buildPdfExport(report, lang) {
-  const { startDate, endDate, stats, employees, days, verifyModes, events, workStart = '09:00', analytics } = report;
+  const { startDate, endDate, stats, employees, days, verifyModes, events, workStart = '09:00', analytics, companyName, branding } = report;
 
   const doc = new PDFDocument({
     margin: 36,
@@ -1695,6 +1883,9 @@ function buildPdfExport(report, lang) {
   const dLong  = (dk) => fmtDateLongLang(dk, lang);
   const dShort = (dk) => fmtDateShortLang(dk, lang);
 
+  // Branding: sumber tunggal judul/subjudul/footer — sama dengan format lain.
+  const br = branding || buildBranding(companyName);
+
   // ── Ringkasan angka turunan ─────────────────────────────────────────────────
   const totalLate     = employees.reduce((s, e) => s + (e.lateCount || 0), 0);
   const totalOntime   = employees.reduce((s, e) => s + (e.ontimeCount || 0), 0);
@@ -1714,26 +1905,114 @@ function buildPdfExport(report, lang) {
   lateArrivalRows.sort((a, b) => a.date.localeCompare(b.date) || b.minutes - a.minutes);
 
   // ── Header ──────────────────────────────────────────────────────────────────
-  const headerH = 74;
+  //
+  // Tinggi header DINAMIS: kalau ada subjudul custom, satu baris tambahan
+  // dipakai — dan seluruh isi halaman (kartu statistik, tabel) harus ikut
+  // bergeser supaya tidak tertimpa.
+  //
+  // SEBELUMNYA `headerH = 74` di-hardcode. Dengan subjudul, baris berikutnya
+  // akan menimpa header biru.
+  //
+  // Posisi Y dihitung dari TINGGI TEKS YANG SEBENARNYA (`doc.heightOfString`),
+  // bukan dari konstanta hardcoded.
+  //
+  // SEBELUMNYA posisi ditulis sebagai angka tetap (14 / 33 / 38 / 55) dan
+  // `headerH = 74` hardcoded. Dengan subjudul, baris-baris itu saling
+  // menabrak. Terukur lewat `npm run check:pdf-layout`:
+  //   - judul    y 8.0–31.4  vs subtitle y 24.8–37.0  → TUMPANG TINDIH
+  //   - subtitle y 29.8–36.3 vs periode y 34.8–41.3  → TUMPANG TINDIH
+  //
+  // Angka tetap tidak bisa benar karena tinggi tiap baris bergantung pada
+  // panjang teks (judul panjang → 2 baris) dan ukuran font.
+  //
+  // Cara yang benar: hitung tinggi tiap baris, lalu susun baris berikutnya
+  // DI BAWAH baris sebelumnya + jarak kecil. `heightOfString` mengukur
+  // persis seperti yang akan digambar PDFKit.
+  const hasSubtitle = !!br.subtitle;
+  const titleText = reportTitle(lang, br.companyName, lbl('title'), br.title).toUpperCase();
+  const periodText = `${lbl('period')}: ${dLong(startDate)} — ${dLong(endDate)}   |   ` +
+    `${fmtDateTimeLang(report.generatedAt, lang)} WIB`;
+  const metaText = `${lbl('lateThreshold')}: ${workStart} WIB   |   ` +
+    `${lbl('employees').replace('Karyawan', 'Karyawan')}: ${employees.length}   |   ` +
+    `${lbl('workingDays')}: ${days.length}`;
+
+  const TITLE_FONT   = { size: 17, font: 'Helvetica-Bold' };
+  const SUBTITLE_FONT = { size: 9,  font: 'Helvetica-Oblique' };
+  const PERIOD_FONT  = { size: 9,  font: 'Helvetica' };
+  const META_FONT    = { size: 7.5, font: 'Helvetica' };
+
+  // Jarak antar baris di dalam header (pt).
+  const HEAD_GAP = 3;
+  const HEADER_PAD_TOP = 14;
+  const HEADER_PAD_BOTTOM = 10;
+
+  const titleH = doc.heightOfString(titleText, { width: pageW, ...TITLE_FONT });
+  const subtitleH = hasSubtitle
+    ? doc.heightOfString(br.subtitle, { width: pageW, ...SUBTITLE_FONT })
+    : 0;
+  const periodH = doc.heightOfString(periodText, { width: pageW, ...PERIOD_FONT });
+  const metaH = doc.heightOfString(metaText, { width: pageW, ...META_FONT });
+
+  // Posisi Y dihitung berurutan dari atas.
+  //
+  // PENTING — SEMANTIKA Y PDFKIT:
+  //   Koordinat Y yang diberikan ke `doc.text(str, x, y)` adalah posisi
+  //   BASELINE baris itu, BUKAN tepi atas kotak teksnya. Kotak teks yang
+  //   sebenarnya dirender meluas ke ATAS baseline sebesar
+  //   `ascent + lineGap` — besarannya bergantung pada ukuran font.
+  //
+  //   Terukur (PyMuPDF, bbox absolut):
+  //     font 17 pt, Y=14  → bbox y0 = 8.0   (offset -6.0)
+  //     font  9 pt, Y=38  → bbox y0 = 34.8  (offset -3.2)
+  //     font 7.5 pt, Y=62  → bbox y0 = 59.3  (offset -2.7)
+  //
+  // Kalau jarak antar-baris hanya dihitung dari `heightOfString` (yang
+  // mengukur tinggi BARIS, bukan kotak glyph), baris berikutnya masih
+  // menabrak baris sebelumnya — karena kotak baris berikutnya dimulai
+  // `offset` pt DI ATAS posisi Y-nya.
+  //
+  // Solusi: jarak antar-baris = tinggi baris + offset baris BERIKUTNYA.
+  // `doc.currentLineHeight(true)` memberi tinggi baris termasuk leading,
+  // dan offset dapat dihitung dari tinggi baris vs tinggi glyph.
+  //
+  // Cara yang dipakai di sini: setiap baris diberi ruang =
+  // `heightOfString(baris) + spaceAfter`, dan posisi Y berikutnya =
+  // Y sekarang + tinggi baris sekarang + spaceAfter + ASCENT_OFFSET_NEXT.
+  // ASCENT_OFFSET dihitung dari rasio ascent/lineHeight font yang dipakai.
+  const ASCENT_RATIO = 0.75;   // rasio ascent font terhadap tinggi baris
+  const ascentOf = (fontSize) => {
+    // `heightOfString` mengembalikan tinggi baris (termasuk leading).
+    // Untuk font standar, ascent ≈ 0.75 × tinggi baris.
+    const lineH = doc.heightOfString('Ag', { width: pageW, size: fontSize, font: 'Helvetica' });
+    return lineH * ASCENT_RATIO;
+  };
+
+  const TITLE_ASCENT    = ascentOf(TITLE_FONT.size);
+  const SUBTITLE_ASCENT = hasSubtitle ? ascentOf(SUBTITLE_FONT.size) : 0;
+  const PERIOD_ASCENT   = ascentOf(PERIOD_FONT.size);
+  const META_ASCENT     = ascentOf(META_FONT.size);
+
+  const TITLE_Y    = HEADER_PAD_TOP + TITLE_ASCENT;
+  const SUBTITLE_Y = TITLE_Y + titleH + HEAD_GAP + SUBTITLE_ASCENT;
+  const PERIOD_Y  = SUBTITLE_Y + subtitleH + (hasSubtitle ? HEAD_GAP : 0) + PERIOD_ASCENT;
+  const META_Y    = PERIOD_Y + periodH + HEAD_GAP + META_ASCENT;
+  const headerH   = META_Y + metaH - META_ASCENT + HEADER_PAD_BOTTOM;
+
   doc.rect(0, 0, W, headerH).fill(PDF_STYLE.navyDark);
   // Aksen tipis di bawah header.
   doc.rect(0, headerH - 4, W, 4).fill('#3B82F6');
 
-  doc.fillColor('white').fontSize(17).font('Helvetica-Bold')
-    .text(lbl('title').toUpperCase(), M, 14, { align: 'center', width: pageW });
-  doc.fillColor('#DBEAFE').fontSize(9).font('Helvetica')
-    .text(
-      `${lbl('period')}: ${dLong(startDate)} — ${dLong(endDate)}   |   ` +
-      `${fmtDateTimeLang(report.generatedAt, lang)} WIB`,
-      M, 38, { align: 'center', width: pageW },
-    );
-  doc.fillColor('#93C5FD').fontSize(7.5).font('Helvetica')
-    .text(
-      `${lbl('lateThreshold')}: ${workStart} WIB   |   ` +
-      `${lbl('employees').replace('Karyawan', 'Karyawan')}: ${employees.length}   |   ` +
-      `${lbl('workingDays')}: ${days.length}`,
-      M, 55, { align: 'center', width: pageW },
-    );
+  doc.fillColor('white').fontSize(TITLE_FONT.size).font(TITLE_FONT.font)
+    .text(titleText, M, TITLE_Y, { align: 'center', width: pageW });
+  // Subjudul custom (opsional) — satu baris miring di bawah judul.
+  if (hasSubtitle) {
+    doc.fillColor('#DBEAFE').fontSize(SUBTITLE_FONT.size).font(SUBTITLE_FONT.font)
+      .text(br.subtitle, M, SUBTITLE_Y, { align: 'center', width: pageW, lineBreak: false });
+  }
+  doc.fillColor('#DBEAFE').fontSize(PERIOD_FONT.size).font(PERIOD_FONT.font)
+    .text(periodText, M, PERIOD_Y, { align: 'center', width: pageW });
+  doc.fillColor('#93C5FD').fontSize(META_FONT.size).font(META_FONT.font)
+    .text(metaText, M, META_Y, { align: 'center', width: pageW });
 
   // ── Kartu statistik ────────────────────────────────────────────────────────
   // Lebar dihitung dinamis: 7 kartu harus MUAT di lebar konten (pageW).
@@ -2150,7 +2429,7 @@ function buildPdfExport(report, lang) {
 
     doc.fillColor(PDF_STYLE.slate500).fontSize(7.5).font('Helvetica')
       .text(
-        `${T[lang]?.footer || T.en.footer}  •  ${fmtDateTimeLang(report.generatedAt, lang)} WIB`,
+        `${br.footer || T[lang]?.footer || T.en.footer}  •  ${fmtDateTimeLang(report.generatedAt, lang)} WIB`,
         M, footerY, { width: pageW - 120, lineBreak: false },
       );
 

@@ -48,17 +48,47 @@ const stats = {
   uniqueUsers: new Set(events.map(e => e.name)).size,
 };
 
-const doc = buildExportReport(events, stats, 'en', 'pdf', '09:00', '17:00', true, '2026-11-02', '2026-11-05');
+// Build PDF dari data sintetis.
+//
+// PENTING: dua varian dibangun — TANPA branding dan DENGAN branding
+// (judul + subjudul + footer).
+//
+// SEBELUMNYA hanya satu varian (tanpa branding) yang diuji. Padahal
+// subjudul menambah satu baris di header PDF dan menggeser seluruh isi
+// halaman — dan posisi header yang hardcoded pernah menyebabkan subtitle
+// menabrak baris periode (terukur: subtitle y 29.8–36.3 vs periode
+// y 34.8–41.3).
+//
+// Gate layout WAJIB menguji kedua varian, kalau tidak regresi header tidak
+// akan pernah terdeteksi.
+async function buildPdf(branding) {
+  const doc = buildExportReport(
+    events, stats, 'en', 'pdf', '09:00', '17:00', true,
+    '2026-11-02', '2026-11-05', 0, 'PT Guard Test', branding,
+  );
+  const chunks = [];
+  doc.on('data', c => chunks.push(c));
+  await new Promise((resolve, reject) => {
+    doc.on('end', resolve);
+    doc.on('error', reject);
+    doc.end();
+  });
+  return Buffer.concat(chunks);
+}
+
 const out = process.argv[2] || 'probe.pdf';
-const chunks = [];
-doc.on('data', c => chunks.push(c));
-await new Promise((resolve, reject) => {
-  doc.on('end', resolve);
-  doc.on('error', reject);
-  doc.end();
-});
-const buf = Buffer.concat(chunks);
+const buf = await buildPdf({});
 fs.writeFileSync(out, buf);
 console.log('PDF bytes:', buf.length, '->', out);
+
+// Varian kedua: dengan branding lengkap (judul + subjudul + footer).
+const brandedOut = out.replace(/\.pdf$/, '') + '-branded.pdf';
+const brandedBuf = await buildPdf({
+  title:    'Rekap Absensi Bulanan',
+  subtitle: 'Rekap Absensi Karyawan PT Guard Test',
+  footer:   'RAHASIA - Hanya Untuk Internal',
+});
+fs.writeFileSync(brandedOut, brandedBuf);
+console.log('PDF bytes:', brandedBuf.length, '->', brandedOut);
 console.log('Pemeriksaan layout dijalankan oleh scripts/check-pdf-layout.py (bbox absolut).');
 

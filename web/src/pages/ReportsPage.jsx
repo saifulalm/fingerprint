@@ -76,6 +76,15 @@ export default function ReportsPage() {
   const [detectLate, setDetectLate] = useState(true);
   const [recipients, setRecipients] = useState('');
   const [reportLang, setReportLang] = useState(lang === 'id' ? 'id' : 'en');
+
+  // Lampirkan PDF ke email / kirim sebagai dokumen WhatsApp.
+  //
+  // Default OFF untuk WhatsApp: WhatsApp membatasi ukuran dokumen (±16 MB)
+  // dan PDF laporan 30 hari bisa cukup besar. Untuk EMAIL default ON —
+  // email tanpa lampiran PDF membuat penerima harus mencetak manual dari
+  // browser.
+  const [attachPdf, setAttachPdf] = useState(true);
+  const [attachPdfWa, setAttachPdfWa] = useState(false);
   // Bahasa laporan harus mengikuti pilihan bahasa global. Tanpa ini, user yang
   // berganti bahasa di header tetap menerima laporan dalam bahasa awal.
   useEffect(() => {
@@ -159,7 +168,15 @@ export default function ReportsPage() {
       // recipients HARUS dikirim: server memakai REPORT_DEFAULT_RECIPIENTS
       // bila query param ini kosong, sehingga email tidak pernah sampai ke
       // alamat yang diketik user.
-      await api.get('/report/email', { params: buildParams({ recipients: emails.join(',') }) });
+      //
+      // `attach=pdf` memberi tahu server untuk melampirkan PDF.
+      // Tanpa parameter itu, email hanya berisi HTML.
+      await api.get('/report/email', {
+        params: buildParams({
+          recipients: emails.join(','),
+          ...(attachPdf ? { attach: 'pdf' } : {}),
+        }),
+      });
       showToast(t('rep.email_sent').replace('{n}', emails.length), true);
     } catch (e) {
       // Prioritaskan pesan dari server (err.serverMessage) — e.message axios
@@ -185,7 +202,14 @@ export default function ReportsPage() {
       // teks dan mengembalikanannya), dan mengembalikan hasil per-penerima.
       // Response-nya dibaca supaya user tahu mana yang terkirim dan mana
       // yang gagal — bukan sekadar "siap".
-      const res = await api.get('/report/whatsapp', { params: buildParams({ recipients: phones.join(',') }) });
+      const res = await api.get('/report/whatsapp', {
+        params: buildParams({
+          recipients: phones.join(','),
+          // Kirim PDF sebagai dokumen WhatsApp bila toggle diaktifkan.
+          // Tanpa `attach`, server hanya mengirim ringkasan teks.
+          ...(attachPdfWa ? { attach: 'pdf' } : {}),
+        }),
+      });
       const data = res.data || {};
 
       if (data.failedCount > 0) {
@@ -456,6 +480,39 @@ export default function ReportsPage() {
         <ActionButton icon={Mail} label={t('rep.email_label')} color="#2563EB" onClick={handleEmail} loading={loading.email} disabled={!recipients.trim()} />
         <ActionButton icon={Send} label={t('rep.wa_label')} color="#EA580C" onClick={handleWhatsApp} loading={loading.wa} disabled={!recipients.trim()} />
       </div>
+
+      {/* Opsi lampiran PDF */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={attachPdf}
+              onChange={(e) => setAttachPdf(e.target.checked)}
+              className="w-4 h-4 accent-[#2563EB] cursor-pointer"
+            />
+            <span className="text-sm text-[#F1F5F9]">
+              {t('rep.attach_pdf_email') || 'Lampirkan PDF ke email'}
+            </span>
+          </label>
+
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={attachPdfWa}
+              onChange={(e) => setAttachPdfWa(e.target.checked)}
+              className="w-4 h-4 accent-[#EA580C] cursor-pointer"
+            />
+            <span className="text-sm text-[#F1F5F9]">
+              {t('rep.attach_pdf_wa') || 'Kirim PDF sebagai dokumen WhatsApp'}
+            </span>
+          </label>
+
+          <span className="text-xs text-[#8494AD]">
+            {t('rep.attach_pdf_hint') || 'Email selalu menyertakan PDF. WhatsApp opsional karena ada batas ukuran file.'}
+          </span>
+        </div>
+      </Card>
 
       {/* Features Info */}
       <Card className="p-5">

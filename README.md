@@ -41,6 +41,10 @@
 ### 📊 Absensi & Pelaporan
 - Rekap harian per karyawan (Masuk / Keluar, durasi kerja, deteksi keterlambatan)
 - Laporan **HTML / Excel (XLSX) / PDF** — multi-bahasa (Indonesia / Inggris)
+- **Judul laporan custom** — nama perusahaan, judul, subjudul, dan footer diatur di
+  Pengaturan → Umum, berlaku seragam di PDF/HTML/Excel/Teks/Email/WhatsApp
+- **Lampiran PDF di Email & WhatsApp** — laporan PDF ikut terkirim sebagai file
+  (bukan hanya ringkasan teks), bisa diaktifkan per-klik atau otomatis via scheduler
 - Analitik rekomendasi otomatis (keterlambatan, durasi kerja tidak wajar)
 - Jadwal laporan otomatis (scheduler cron) → kirim via Email / WhatsApp
 - Ekspor PDF/Excel + kirim laporan via Email & WhatsApp dalam satu klik
@@ -442,6 +446,58 @@ memperlihkannya per periode.
 
 ---
 
+## 🎨 Custom Judul & Lampiran PDF Laporan
+
+Laporan absensi bisa di-branding sesuai perusahaan (contoh: **PT Guard Test**).
+
+### A. Men customizing judul, subjudul, dan footer
+
+Tab **Pengaturan → Umum** (buka dari halaman WhatsApp → tab *Pengaturan*):
+
+| Field | Pengaturan DB | Efek |
+|---|---|---|
+| Nama Perusahaan | `company_name` | Ditambahkan ke judul bawaan → "Laporan Absensi — PT Guard Test" |
+| Judul Laporan | `report_title` | Mengganti judul **sepenuhnya** (tidak ditambah nama perusahaan) |
+| Subjudul Laporan | `report_subtitle` | Teks miring di bawah judul (PDF/HTML/Excel/Teks) |
+| Footer Laporan | `report_footer` | Mengganti footer bawaan di kaki laporan |
+
+**Aturan prioritas judul:**
+
+```
+report_title diisi   → dipakai utuh, nama perusahaan TIDAK ditambahkan
+report_title kosong  → "Laporan Absensi" + " — " + company_name (bila ada)
+```
+
+Judul/subjudul/footer berlaku **seragam** di semua format: PDF, HTML, Excel,
+Teks, subjek email, ringkasan WhatsApp, dan jadwal otomatis (scheduler).
+
+### B. Mengirim PDF sebagai lampiran
+
+| Kanal | Cara |
+|---|---|
+| Email | Halaman **Laporan** → centang *Lampirkan PDF ke email* (default ON) → tombol **Email** |
+| WhatsApp | Halaman **Laporan** → centang *Kirim PDF sebagai dokumen WhatsApp* → tombol **WhatsApp** |
+| Jadwal otomatis | Selalu melampirkan PDF (email + WhatsApp) |
+| Tombol *Kirim Laporan Uji* | Selalu melampirkan PDF — untuk verifikasi sebelum mengatur jadwal |
+
+> **Catatan WhatsApp:** WhatsApp membatasi ukuran dokumen (±16 MB). Kalau PDF
+> terlalu besar, ringkasan teks tetap terkirim dan hanya dokumennya yang gagal.
+
+### C. Menguji tanpa kredensial asli
+
+```bash
+cd server
+npm run test:delivery      # bukti email & WhatsApp benar-benar menerima file PDF
+npm run check:report-attach # unit + wiring static
+```
+
+`npm run test:delivery` menjalankan mock SMTP + mock OpenWA gateway, mengirim
+email dan dokumen WhatsApp sungguhan ke mock tersebut, lalu memeriksa:
+nama file, content type, **magic bytes `%PDF`**, ukuran, dan isi PDF. Settings
+DB dikembalikan ke kondisi semula setelah test (termasuk saat test gagal).
+
+---
+
 ## 📧 Uji Email & Scheduler
 
 Ada dua lapis alat uji. Keduanya memakai **mock SMTP server** lokal
@@ -626,7 +682,9 @@ server {
 | `npm run test:email` | Kirim 1 email uji ke mock SMTP & tampilkan isinya |
 | `npm run test:smtp` | Jalankan mock SMTP server (untuk pair dengan `.env`) |
 | `npm run check:scheduler-email` | Guard regresi scheduler + kredensial email |
-| `npm run verify` | Gate: prisma-ids + identity + async-handlers + scheduler-email + pdf-layout |
+| `npm run check:report-attach` | Guard judul custom + lampiran PDF (unit + wiring) |
+| `npm run test:delivery` | Bukti end-to-end: email & WhatsApp benar-benar menerima file PDF |
+| `npm run verify` | Gate: prisma-ids + identity + async-handlers + scheduler-email + report-attach + pdf-layout + delivery |
 
 ### Frontend (`web/`)
 

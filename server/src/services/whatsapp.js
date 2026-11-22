@@ -803,6 +803,81 @@ export const whatsappService = {
     }
   },
 
+  /**
+   * Kirim dokumen (PDF laporan) ke satu penerima.
+   *
+   * Mendukung dua jalur:
+   *   1. OpenWA gateway — `POST /api/sessions/:id/messages/send-document`
+   *      dengan `base64` (dokumen dikirim langsung, tanpa perlu URL publik).
+   *   2. Baileys langsung — `sock.sendMessage(chatId, { document: { url } })`
+   *      dengan Buffer.
+   *
+   * @param {string} to nomor WhatsApp
+   * @param {Buffer} buffer isi file
+   * @param {string} filename nama file yang dilihat penerima
+   * @param {string} mimetype tipe MIME (default application/pdf)
+   * @param {string} [caption] keterangan singkat (opsional)
+   * @returns {Promise<object>} hasil pengiriman
+   */
+  async sendDocument(to, buffer, filename, mimetype = 'application/pdf', caption = '') {
+    if (!buffer || !buffer.length) {
+      throw new Error('Isi dokumen kosong — tidak ada yang bisa dikirim.');
+    }
+    if (!filename) throw new Error('Nama file dokumen wajib diisi.');
+
+    await refreshGatewayUrl();
+
+    const chatId = toWhatsAppJid(to);
+
+    // ── 1. OpenWA gateway ────────────────────────────────────────────────────
+    //
+    // Endpoint `send-document` menerima `base64` — jadi PDF bisa dikirim
+    // tanpa harus diekspos lewat URL publik. Field `base64` diprioritaskan
+    // over `url` bila keduanya ada (perilaku gateway).
+    if (this.isGatewayConfigured()) {
+      try {
+        const id = await ensureGatewaySession();
+        const payload = {
+          chatId,
+          base64: Buffer.from(buffer).toString('base64'),
+          mimetype,
+          filename,
+        };
+        if (caption) payload.caption = caption;
+
+        const result = await gatewayRequest(
+          'POST', '/api/sessions/' + id + '/messages/send-document', payload,
+        );
+        return result;
+      } catch (err) {
+        console.error('[WhatsApp] Gateway send-document error:', err.message);
+        // Fall through ke Baileys
+      }
+    }
+
+    // ── 2. Baileys langsung ──────────────────────────────────────────────────
+    if (!sock || connectionState !== 'connected') {
+      throw new Error(
+        'WhatsApp belum terhubung dan gateway tidak dikonfigurasi. ' +
+        'Scan QR di halaman WhatsApp atau set URL gateway di tab Pengaturan.',
+      );
+    }
+    try {
+      const msg = await sock.sendMessage(chatId, {
+        document: {
+          url: buffer,
+        },
+        fileName: filename,
+        mimetype,
+        ...(caption ? { caption } : {}),
+      });
+      return msg;
+    } catch (err) {
+      console.error('[WhatsApp] Baileys send-document error:', err.message);
+      throw err;
+    }
+  },
+
   getDeviceInfo() {
     // Bila gateway dikonfigurasi dan sesi gateway sudah ada, tampilkan info
     // gateway — bahkan kalau `connect()` belum pernah dipanggil di proses ini

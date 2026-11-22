@@ -164,6 +164,15 @@ export function parseMessage(raw) {
 
   let text = '';
   let html = '';
+  // Lampiran (attachment) yang ditemukan di email.
+  //
+  // SEBELUMNYA mock hanya mem-parse bagian text/plain dan text/html — bagian
+  // dengan `Content-Disposition: attachment` DILEWATI. Akibatnya test tidak
+  // pernah bisa membuktikan bahwa laporan PDF benar-benar ikut terkirim.
+  //
+  // Setiap lampiran disimpan sebagai { filename, contentType, size, content }
+  // dengan `content` berupa Buffer (isi file yang benar-benar terkirim).
+  const attachments = [];
 
   if (/multipart/i.test(contentType)) {
     // Ambil setiap bagian MIME berdasarkan boundary.
@@ -182,7 +191,27 @@ export function parseMessage(raw) {
     if (boundary && boundary.startsWith('--')) boundary = boundary.slice(2);
 
     if (boundary) {
+      // MIME bisa BERLapis: email laporan punya 3 level —
+      //   multipart/mixed
+      //     └─ multipart/alternative
+          //          ├─ text/plain
+      //          └─ text/html
+      //     └─ multipart/related  (atau langsung application/pdf)
+      //          └─ application/pdf   ← lampiran
+      //
+      // SEBELUMNYA parser hanya memproses SATU level: setiap chunk
+      // multipart/alternative dianggap sebagai lampiran (karena tipenya
+      // "multipart/..." dan bukan "text/..."). Akibatnya lampiran PDF ikut
+      // terambil sebagai blok teks mentah yang SALAH, dan PDF-nya sendiri
+      // tidak pernah terbaca.
+      //
+      // Parser dipisah dua tahap:
+      //   1. `collectAttachments` — menelusuri SEMUA level multipart,
+      //      mengambil hanya bagian ber-Content-Disposition: attachment.
+      //   2. `collectText`       — mengambil text/plain & text/html dari
+      //      level TERAKHIR (alternative/related), bukan dari wrapper.
       const chunks = bodyRaw.split(`--${boundary}`);
+      const parts = [];
       for (const chunk of chunks) {
         // Penutup boundary dimulai dengan "--" → lewati.
         if (/^--/.test(chunk.trim())) continue;
@@ -196,13 +225,71 @@ export function parseMessage(raw) {
 
         const chunkType = (chunkHead.match(/Content-Type:\s*([^\n;]+)/i) || [])[1] || '';
         const chunkEncoding = (chunkHead.match(/Content-Transfer-Encoding:\s*([^\n]+)/i) || [])[1] || '';
+        const chunkDisposition = (chunkHead.match(/Content-Disposition:\s*([^\n]+)/i) || [])[1] || '';
+        const innerBoundary = (chunkHead.match(/boundary="?([^";\n]+)"?/i) || [])[1] || '';
 
-        let decoded = chunkBody;
-        if (/quoted-printable/i.test(chunkEncoding)) decoded = decodeQuotedPrintable(chunkBody);
-        else if (/base64/i.test(chunkEncoding)) decoded = decodeBase64Text(chunkBody);
+        parts.push({ head: chunkHead, body: chunkBody, type: chunkType,
+                     encoding: chunkEncoding, disposition: chunkDisposition,
+                     innerBoundary: innerBoundary.trim().replace(/^--/, '') });
+      }
 
-        if (/text\/html/i.test(chunkType)) html = decoded;
-        else if (/text\/plain/i.test(chunkType)) text = decoded;
+      // Tahap 1 — lampiran: hanya bagian yang eksplisit ber-disposition attachment.
+      for (const part of parts) {
+        if (!/attachment/i.test(part.disposition)) continue;
+        const fnMatch = part.head.match(/filename="?([^";\n]+)"?/i);
+        const filename = fnMatch ? fnMatch[1].trim() : `attachment-${attachments.length + 1}`;
+
+        // Isi attachment HARUS disimpan sebagai Buffermentah — BUKAN lewat
+        // `decodeBase64()` yang mengubahnya jadi string UTF-8.
+        //
+        // SEBELUMNYA: base64 attachment di-decode ke string UTF-8 dulu, lalu
+        // di-Buffer-kan lagi. Byte biner PDF jadi rusak (magic bytes "%PDF"
+        // berubah jadi "<1~×") — sehingga test tidak pernah bisa membuktikan
+        // file PDF benar-benar terkirim utuh.
+        let content;
+        if (/base64/i.test(part.encoding)) {
+          content = Buffer.from(part.body.replace(/\s+/g, ''), 'base64');
+        } else if (/quoted-printable/i.test(part.encoding)) {
+          content = Buffer.from(decodeQuotedPrintable(part.body), 'utf8');
+        } else {
+          content = Buffer.from(part.body, 'utf8');
+        }
+        attachments.push({
+          filename,
+          contentType: part.type || 'application/octet-stream',
+          size: content.length,
+          content,
+        });
+      }
+
+      // Tahap 2 — teks: telusuri level multipart terdalam yang berisi
+      // text/plain & text/html.
+      const textPart = parts.find((p) => !/attachment/i.test(p.disposition));
+      if (textPart) {
+        const inner = textPart.innerBoundary;
+        if (inner && /multipart/i.test(textPart.type)) {
+          // Resursively parse inner multipart.
+          const innerParts = textPart.body.split(`--${inner}`);
+          for (const ic of innerParts) {
+            if (/^--/.test(ic.trim())) continue;
+            const ip = ic.split(/\n[ \t]*\n/);
+            const iHead = ip.shift() || '';
+            let iBody = ip.join('\n\n').replace(/\n--\s*$/, '').trimEnd();
+            const iType = (iHead.match(/Content-Type:\s*([^\n;]+)/i) || [])[1] || '';
+            const iEnc = (iHead.match(/Content-Transfer-Encoding:\s*([^\n]+)/i) || [])[1] || '';
+            let dec = iBody;
+            if (/quoted-printable/i.test(iEnc)) dec = decodeQuotedPrintable(iBody);
+            else if (/base64/i.test(iEnc)) dec = decodeBase64Text(iBody);
+            if (/text\/html/i.test(iType)) html = dec;
+            else if (/text\/plain/i.test(iType)) text = dec;
+          }
+        } else {
+          let dec = textPart.body;
+          if (/quoted-printable/i.test(textPart.encoding)) dec = decodeQuotedPrintable(textPart.body);
+          else if (/base64/i.test(textPart.encoding)) dec = decodeBase64Text(textPart.body);
+          if (/text\/html/i.test(textPart.type)) html = dec;
+          else if (/text\/plain/i.test(textPart.type)) text = dec;
+        }
       }
     }
   } else {
@@ -223,6 +310,7 @@ export function parseMessage(raw) {
     body: html || text,
     text,
     html,
+    attachments,
   };
 }
 
@@ -306,6 +394,9 @@ export function startMockSmtpServer(options = {}) {
             text: parsed.text,
             html: parsed.html,
             headers: parsed.headers,
+            // Lampiran ikut disimpan supaya test bisa MEMBUKTIKAN file PDF
+            // benar-benar terkirim (bukan cuma melihat HTTP 200).
+            attachments: parsed.attachments || [],
           };
           messages.push(record);
           console.log(`[mock-smtp] ✉  email diterima: "${parsed.subject}" → ${parsed.to.join(', ')}`);

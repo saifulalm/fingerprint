@@ -16,7 +16,7 @@
     "test:scheduler": "node scripts/test-scheduler-email.mjs",
     "test:smtp": "node scripts/test-email-local.mjs",
     "test:email": "node scripts/test-email-local.mjs --send",
-    "check:pdf-layout": "node scripts/probe-pdf-layout.mjs probe-layout.pdf && node scripts/run-pdf-layout-check.mjs probe-layout.pdf",
+    "check:pdf-layout": "node scripts/probe-pdf-layout.mjs probe-layout.pdf && node scripts/run-pdf-layout-check.mjs probe-layout.pdf probe-layout-branded.pdf",
     "check:prisma-ids": "node scripts/check-prisma-id-defaults.mjs prisma/schema.prisma",
     "check:identity": "node scripts/test-identity-resolver.mjs",
     "check:async-handlers": "node scripts/check-async-handlers.mjs",
@@ -24,11 +24,13 @@
     "check:report-names": "node scripts/check-report-names.mjs",
     "check:api-usage": "node scripts/check-api-response-usage.mjs",
     "check:device-roster": "node scripts/test-device-roster-match.mjs",
+    "check:report-attach": "node scripts/test-report-attachment.mjs",
+    "test:delivery": "node scripts/test-report-delivery.mjs",
     "match:roster": "node scripts/match-device-roster.mjs",
     "audit:device-users": "node scripts/audit-device-user-consistency.mjs",
     "audit:device-users:fix": "node scripts/audit-device-user-consistency.mjs --fix",
     "audit:id-aliases": "node scripts/audit-stale-id-aliases.mjs",
-    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:report-names && npm run check:api-usage && npm run check:device-roster && npm run check:pdf-layout"
+    "verify": "npm run check:prisma-ids && npm run check:identity && npm run check:async-handlers && npm run check:scheduler-email && npm run check:report-names && npm run check:api-usage && npm run check:device-roster && npm run check:report-attach && npm run check:pdf-layout && npm run test:delivery"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

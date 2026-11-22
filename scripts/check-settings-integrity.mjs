@@ -93,6 +93,43 @@ if (dead.length) {
   console.log(`PASS  semua ${uiKeys.size - IGNORE.size} field UI dipakai di server`);
 }
 
+// ─── 2b. Setting server WAJIB bisa diisi lewat UI ─────────────────────────────
+//
+// Arah sebaliknya dari cek di atas: setting yang terdaftar di server tapi
+// TIDAK punya field di form UI = field mati juga.
+//
+// SEBELUMNYA `report_title`, `report_subtitle`, dan `report_footer` sudah
+// terdaftar di SETTINGS_KEYS (jadi API menerimanya dan menyimpannya) tapi
+// tidak punya input di SettingsPanel → user tidak pernah bisa mengisinya.
+// Akibatnya user melihat "tersimpan", lalu laporan TIDAK BERUBAH.
+//
+// Aturan: setiap key di SETTINGS_KEYS (kecuali key grup dan yang memang
+// server-only) harus muncul sebagai `key: '...'` di FIELD_DEFS SettingsPanel.
+const ctrlSrc = readFileSync(path.join(SERVER, 'controllers', 'settingsController.js'), 'utf8');
+const keysBlock = ctrlSrc.match(/SETTINGS_KEYS\s*=\s*\[([\s\S]*?)\n\];/);
+const serverKeys = keysBlock
+  ? [...keysBlock[1].matchAll(/key:\s*'([a-z_]+)'/g)].map((m) => m[1])
+  : [];
+
+// Key yang memang TIDAK punya field UI:
+//   - key grup tab ('email', 'whatsapp', 'general')
+//   - 'smtp_pass' & 'wa_gateway_url' → punya field UI (type password), tetap
+//     di-exemptkan karena nilainya tidak pernah dikirim balik ke form.
+const UI_EXEMPT = new Set(['email', 'whatsapp', 'general']);
+
+const orphanSettings = serverKeys.filter(
+  (k) => !UI_EXEMPT.has(k) && !uiKeys.has(k),
+);
+
+if (orphanSettings.length) {
+  failed = 1;
+  console.log(
+    `FAIL  setting server tanpa field UI (user tidak bisa mengisinya): ${orphanSettings.join(', ')}`,
+  );
+} else {
+  console.log(`PASS  semua ${serverKeys.length - UI_EXEMPT.size} setting server punya field UI`);
+}
+
 // ─── 3. Tidak ada menit 60 pada format waktu ───────────────────────────────────
 const analytics = readFileSync(path.join(SERVER, 'services', 'attendanceAnalyticsService.js'), 'utf8');
 if (/Math\.round\(mins % 60\)/.test(analytics)) {
