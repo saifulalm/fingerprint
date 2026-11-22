@@ -336,6 +336,33 @@ const BRAND = {
   footer:   'RAHASIA - Hanya Untuk Internal',
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// F2. Freeze pane sheet Ringkasan ikut mengikuti subjudul
+//
+// `ySplit` menentukan berapa baris teratas yang DIBEKUKAN. Block judul
+// sheet Ringkasan = judul + [subjudul] + periode.
+//
+// SEBELUMNYA `ySplit: 3` di-hardcode. Tanpa subjudul itu = judul + periode +
+// baris KOSONG → satu baris terfreeze sia-sia, dan baris ringkasan ikut
+// terpotong saat scroll. Dengan subjudul, 3 baris = judul + subjudul + periode
+// (benar).
+console.log('\n=== F2. FREEZE PANE SHEET RINGKASAN ===');
+{
+  const mk = (branding) => buildExportReport(
+    fakeData, fakeStats, 'id', 'excel', '09:00', '17:00', true,
+    '2026-11-10', '2026-11-10', 0, COMPANY, branding,
+  ).getWorksheet('Ringkasan').views?.[0]?.ySplit;
+
+  const yNoSub = mk({});
+  const ySub = mk(BRAND);
+
+  cek('tanpa subjudul → 2 baris terfreeze (judul + periode)',
+    yNoSub === 2, `(ySplit: ${yNoSub})`);
+  cek('dengan subjudul → 3 baris terfreeze (judul + subjudul + periode)',
+    ySub === 3, `(ySplit: ${ySub})`);
+}
+
+
 const branded = buildDetailedReport(
   fakeData, fakeStats, 'id', '09:00', '17:00', true, '2026-11-10', '2026-11-10', 0, COMPANY, BRAND,
 );

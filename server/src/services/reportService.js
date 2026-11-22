@@ -1501,7 +1501,19 @@ function buildExcelExport(report, lang) {
     align:  { horizontal: 'center' },
   });
 
-  ws1.views = [{ state: 'frozen', xSplit: 0, ySplit: 3 }];
+  // Baris yang dibekukan (freeze pane) = seluruh blok JUDUL, bukan satu
+  // baris tetap.
+  //
+  // SEBELUMNYA `ySplit: 3` di-hardcode. Tanpa subjudul, baris 1..3 adalah
+  // judul + periode + baris KOSONG (spacer) → satu baris terfreeze sia-sia
+  // dan isi yang lebih penting (baris ringkasan) ikut terpotong. Dengan
+  // subjudul, baris 1..3 = judul + subjudul + periode (benar).
+  //
+  // Jadi jumlah baris yang dibekukan harus mengikuti Keberadaan subjudul:
+  //   tanpa subjudul → 2 baris (judul + periode)
+  //   dengan subjudul → 3 baris (judul + subjudul + periode)
+  const frozenRows = br.subtitle ? 3 : 2;
+  ws1.views = [{ state: 'frozen', xSplit: 0, ySplit: frozenRows }];
 
   // ── Sheet 2: Per Employee ───────────────────────────────────────────────────
   const ws2 = wb.addWorksheet(lbl('sheetEmployee'));
