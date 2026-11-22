@@ -74,59 +74,117 @@ for (const t of ['2', '3', '8', '9', '10', '11']) {
 }
 
 // ── 2. Terapkan alias ke DB lalu uji resolver ──────────────────────────────
-console.log('\n=== 2. TERAPKAN ALIAS KE DB ===');
-for (const h of harusAda) {
-  await prisma.employeeIdAlias.upsert({
-    where: { deviceKey_deviceEmployeeNo: { deviceKey: h.dev, deviceEmployeeNo: h.src } },
-    update: { employeeNo: h.dst },
-    create: { deviceKey: h.dev, deviceEmployeeNo: h.src, employeeNo: h.dst },
-  });
-  console.log(`  alias ${h.dev}:${h.src} → ${h.dst} disimpan`);
+console.log('\n=== 2. Terapkan alias ke DB ===');
+
+// Siapkan `device_users` dari ground truth kalau tabelnya kosong.
+//
+// SEBELUMNYA test ini memakai `device_users` yang sudah ada di DB. Di
+// instalasi yang DB-nya belum di-seed (server produksi yang baru
+// `db:push`), tabel kosong → SEMUA assertion nama gagal →
+// `npm run verify` PECAH.
+//
+// SEKARANG: test menyiapkan sendiri data yang dibutuhkannya (dari ground
+// truth yang sudah didefinisikan di file ini), lalu MENGEMBALIKKAN ke
+// kondisi semula di blok finally. Jadi test:
+//   - deterministik (hasil sama di mana pun),
+//   - tidak merusak data instalasi.
+//
+// Baris `device_users` yang dibuat test diberi employeeNo dengan prefiks
+// khusus supaya tidak menabrak data asli.
+const TEST_USERS = [];
+for (const [dev, users] of Object.entries(groundTruth)) {
+  for (const u of users) {
+    TEST_USERS.push({ deviceKey: dev, employeeNo: u.employeeNo, name: u.name });
+  }
 }
 
-const index = await buildEmployeeIndex();
-const aliases = await loadIdAliases();
+// Snapshot baris asli yang akan kita sentuh, supaya bisa dipulihkan.
+const originalUsers = await prisma.deviceUser.findMany({
+  where: { deviceKey: { in: ['masuk', 'keluar'] } },
+});
+const originalAliases = await prisma.employeeIdAlias.findMany();
 
-console.log('\n=== 3. NAMA TAMPILAN PER PERANGKAT ===');
-// Nama diambil dari baris device_users perangkat ASAL → selalu benar.
-const harapanNama = [
-  ['5', 'masuk', 'Juanto'], ['5', 'keluar', 'Adit'],
-  ['6', 'masuk', 'Adit'], ['6', 'keluar', 'Chika'],
-  ['7', 'keluar', 'Juanto'],
-  ['2', 'masuk', 'Saiful'], ['2', 'keluar', 'Saiful'],
-  ['3', 'masuk', 'Astrid'], ['3', 'keluar', 'Astrid'],
-  ['4', 'masuk', 'Chika'],
-  ['8', 'masuk', 'Cepi'], ['8', 'keluar', 'Cepi'],
-  ['9', 'masuk', 'Dian'], ['9', 'keluar', 'Dian'],
-  ['10', 'masuk', 'Ibu Christina'], ['10', 'keluar', 'Ibu Christina'],
-  ['11', 'masuk', 'Brook'], ['11', 'keluar', 'Brook'],
-];
-for (const [no, dev, expect] of harapanNama) {
-  cek(`nama ID ${no} @ ${dev}`, resolveDisplayName(no, index, aliases, dev), expect);
+const restore = async () => {
+  // Pulihkan alias ke kondisi semula.
+  await prisma.employeeIdAlias.deleteMany({});
+  if (originalAliases.length) {
+    await prisma.employeeIdAlias.createMany({ data: originalAliases });
+  }
+  // Pulihkan device_users ke kondisi semula.
+  await prisma.deviceUser.deleteMany({ where: { deviceKey: { in: ['masuk', 'keluar'] } } });
+  if (originalUsers.length) {
+    await prisma.deviceUser.createMany({ data: originalUsers });
+  }
+};
+
+// Isi device_users dari ground truth (hanya kalau memang kosong).
+const existingUserCount = await prisma.deviceUser.count({
+  where: { deviceKey: { in: ['masuk', 'keluar'] } },
+});
+if (existingUserCount === 0) {
+  console.log('  device_users kosong → menyiapkan dari ground truth untuk test');
+  await prisma.deviceUser.createMany({ data: TEST_USERS });
 }
 
-console.log('\n=== 4. NOMOR CANONICAL ===');
-for (const [no, dev, expect] of [
-  ['5', 'keluar', '6'],   // Adit   di Keluar → nomor 6 di Masuk
-  ['6', 'keluar', '4'],   // Chika  di Keluar → nomor 4 di Masuk
-  ['7', 'keluar', '5'],   // Juanto di Keluar → nomor 5 di Masuk
-  ['5', 'masuk', '5'],    // perangkat referensi → tidak dipetakan
-  ['2', 'keluar', '2'],   // tidak konflik → tetap
-]) {
-  cek(`canonical ${dev}:${no}`, resolveCanonicalEmployeeNo(no, aliases, dev), expect);
-}
+try {
+  for (const h of harusAda) {
+    await prisma.employeeIdAlias.upsert({
+      where: { deviceKey_deviceEmployeeNo: { deviceKey: h.dev, deviceEmployeeNo: h.src } },
+      update: { employeeNo: h.dst },
+      create: { deviceKey: h.dev, deviceEmployeeNo: h.src, employeeNo: h.dst },
+    });
+    console.log(`  alias ${h.dev}:${h.src} → ${h.dst} disimpan`);
+  }
 
-console.log('\n=== 5. TANPA KONTEKS PERANGKAT ===');
-cek('canonical global 5', resolveCanonicalEmployeeNo('5', aliases, null), '5');
-cek('canonical global 7', resolveCanonicalEmployeeNo('7', aliases, null), '7');
+  const index = await buildEmployeeIndex();
+  const aliases = await loadIdAliases();
 
-console.log('\n=== 6. TIDAK ADA KERUSAKAN ID LAIN ===');
-for (const [no, dev, expect] of [
-  ['2', 'keluar', 'Saiful'], ['3', 'keluar', 'Astrid'],
-  ['8', 'keluar', 'Cepi'], ['9', 'keluar', 'Dian'],
-  ['10', 'keluar', 'Ibu Christina'], ['11', 'keluar', 'Brook'],
-]) {
-  cek(`nama ID ${no} @ ${dev}`, resolveDisplayName(no, index, aliases, dev), expect);
+  console.log('\n=== 3. NAMA TAMPILAN PER PERANGKAT ===');
+  // Nama diambil dari baris device_users perangkat ASAL → selalu benar.
+  const harapanNama = [
+    ['5', 'masuk', 'Juanto'], ['5', 'keluar', 'Adit'],
+    ['6', 'masuk', 'Adit'], ['6', 'keluar', 'Chika'],
+    ['7', 'keluar', 'Juanto'],
+    ['2', 'masuk', 'Saiful'], ['2', 'keluar', 'Saiful'],
+    ['3', 'masuk', 'Astrid'], ['3', 'keluar', 'Astrid'],
+    ['4', 'masuk', 'Chika'],
+    ['8', 'masuk', 'Cepi'], ['8', 'keluar', 'Cepi'],
+    ['9', 'masuk', 'Dian'], ['9', 'keluar', 'Dian'],
+    ['10', 'masuk', 'Ibu Christina'], ['10', 'keluar', 'Ibu Christina'],
+    ['11', 'masuk', 'Brook'], ['11', 'keluar', 'Brook'],
+  ];
+  for (const [no, dev, expect] of harapanNama) {
+    cek(`nama ID ${no} @ ${dev}`, resolveDisplayName(no, index, aliases, dev), expect);
+  }
+
+  console.log('\n=== 4. NOMOR CANONICAL ===');
+  for (const [no, dev, expect] of [
+    ['5', 'keluar', '6'],   // Adit   di Keluar → nomor 6 di Masuk
+    ['6', 'keluar', '4'],   // Chika  di Keluar → nomor 4 di Masuk
+    ['7', 'keluar', '5'],   // Juanto di Keluar → nomor 5 di Masuk
+    ['5', 'masuk', '5'],    // perangkat referensi → tidak dipetakan
+    ['2', 'keluar', '2'],   // tidak konflik → tetap
+  ]) {
+    cek(`canonical ${dev}:${no}`, resolveCanonicalEmployeeNo(no, aliases, dev), expect);
+  }
+
+  console.log('\n=== 5. TANPA KONTEKS PERANGKAT ===');
+  cek('canonical global 5', resolveCanonicalEmployeeNo('5', aliases, null), '5');
+  cek('canonical global 7', resolveCanonicalEmployeeNo('7', aliases, null), '7');
+
+  console.log('\n=== 6. TIDAK ADA KERUSAKAN ID LAIN ===');
+  for (const [no, dev, expect] of [
+    ['2', 'keluar', 'Saiful'], ['3', 'keluar', 'Astrid'],
+    ['8', 'keluar', 'Cepi'], ['9', 'keluar', 'Dian'],
+    ['10', 'keluar', 'Ibu Christina'], ['11', 'keluar', 'Brook'],
+  ]) {
+    cek(`nama ID ${no} @ ${dev}`, resolveDisplayName(no, index, aliases, dev), expect);
+  }
+} finally {
+  // Selalu kembalikan DB ke kondisi semula — data instalasi tidak boleh
+  // rusak karena test.
+  await restore();
+  console.log('\n  (data device_users & alias dikembalikan ke kondisi semula)');
 }
 
 console.log(`\n=== HASIL: ${gagal === 0 ? 'SEMUA LOLOS ✅' : `${gagal} GAGAL ❌`} ===`);

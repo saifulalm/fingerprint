@@ -61,6 +61,40 @@ function dominantName(deviceKey, employeeNo) {
 const devices = [...new Set(rows.map((r) => r.deviceKey))];
 const report = {};
 
+// ─── KONDISI: BELUM ADA DATA PERANGKAT DI DB ─────────────────────────────────
+//
+// PENTING: kalau `device_users` kosong, audit TIDAK boleh menyimpulkan
+// "semua konsisten". Itu akan menyuruh user bahwa tidak ada masalah,
+// padahal roster perangkatnya belum pernah masuk ke DB sama sekali.
+//
+// SEBELUMNYA: DB kosong → 0 mismatch → "RINGKASAN: 0 nomor perlu
+// disinkronkan ulang" → user mengira ID-nya sudah benar.
+const rosterEmpty = rows.length === 0;
+const recordsEmpty = records.length === 0;
+
+if (rosterEmpty) {
+  console.log('══════════════════════════════════════════════════════════════════');
+  console.log('  ⚠️  BELUM ADA DATA PERANGKAT DI DATABASE');
+  console.log('══════════════════════════════════════════════════════════════════');
+  console.log('');
+  console.log('  Tabel `device_users` masih kosong — roster user dari perangkat');
+  console.log('  belum pernah masuk ke database. Ini BUKAN berarti ID sudah benar.');
+  console.log('');
+  console.log('  CARA MENGISI:');
+  console.log('    1. Jalankan:  npm run seed');
+  console.log('       (memuat fixture device_users + alias bawaan)');
+  console.log('    2. Atau buka: Pusat Perangkat → pilih device → "Sinkron User"');
+  console.log('       (membaca roster langsung dari perangkat)');
+  console.log('    3. Lalu ulangi:  npm run audit:device-users');
+  console.log('');
+  console.log(`  attendance_records: ${records.length} baris`);
+  console.log('');
+
+  await prisma.$disconnect();
+  // Exit 1 — roster belum terisi, kondisi ini BELUM bisa dinilai.
+  process.exit(1);
+}
+
 for (const dk of devices) {
   const list = rows.filter((r) => r.deviceKey === dk);
   const detail = list.map((u) => {
@@ -130,6 +164,13 @@ if (onlyOneDevice.length === 0) {
 
 console.log('\n══════════════════════════════════════════════════════════════════');
 console.log(`  RINGKASAN: ${mismatchTotal} nomor perlu disinkronkan ulang`);
+if (recordsEmpty) {
+  console.log('══════════════════════════════════════════════════════════════════');
+  console.log('  ℹ️  Tabel `attendance_records` masih kosong — belum ada data absensi');
+  console.log('      untuk membandingkan nama. Audit hanya membandingkan nama yang');
+  console.log('      tercatat di `device_users` vs `attendance_records`.');
+  console.log('      Jalankan sinkronisasi absensi dari Dashboard atau Devices.');
+}
 console.log('══════════════════════════════════════════════════════════════════');
 console.log('');
 console.log('  CARA MEMPERBAIKI:');
