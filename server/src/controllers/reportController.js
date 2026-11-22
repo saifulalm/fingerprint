@@ -265,10 +265,15 @@ async function resolveReportParams(query = {}) {
   // SEBELUMNYA ketiga setting ini TIDAK PERNAH dibaca — user mengisinya di
   // form, klik Simpan, lihat "sukses", lalu tidak ada yang berubah di laporan.
   // Sekarang dibaca di sini dan diteruskan ke builder laporan.
+  //
+  // Nilai di-TRIM di sini juga. `settingStr()` mengembalikan nilai mentah
+  // dari DB, jadi field yang diisi spasi saja ("   ") akan lolos sebagai
+  // "terisi" — dan judul laporan jadi " — PT Guard Test" (memulai dengan
+  // tanda pisah). Sekarang `reportTitle()` juga mem-trim sebagai jaring pengaman kedua.
   const branding = {
-    title:    settingStr(map, 'report_title', ''),
-    subtitle: settingStr(map, 'report_subtitle', ''),
-    footer:   settingStr(map, 'report_footer', ''),
+    title:    settingStr(map, 'report_title', '').trim(),
+    subtitle: settingStr(map, 'report_subtitle', '').trim(),
+    footer:   settingStr(map, 'report_footer', '').trim(),
   };
 
   return { workStart, workEnd, detectLate, toleranceMinutes, companyName, lang, branding };
@@ -535,7 +540,6 @@ export async function sendReportWhatsApp(req, res) {
       startDate,
       endDate,
       recipients: recipientsParam,
-      lang = process.env.REPORT_DEFAULT_LANG || 'id',
     } = req.query;
 
     if (!startDate || !endDate) {
@@ -547,18 +551,25 @@ export async function sendReportWhatsApp(req, res) {
       return res.status(400).json({ error: 'Format tanggal harus YYYY-MM-DD (mis. 2026-11-10).' });
     }
 
-    const language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en';
-
-    // Nama perusahaan & branding dipakai di caption dokumen WhatsApp.
+    // Bahasa laporan: query param → setting `report_lang` (Pengaturan) → env → 'id'.
     //
-    // Parameter laporan (jam kerja, deteksi terlambat, toleransi) ikut
-    // diambil dari Pengaturan — SEBELUMNYA jalur WhatsApp memakai
-    // hardcode '09:00'/'17:00'/true/0, jadi PDF yang dikirim ke WhatsApp
-    // punya angka berbeda dari email untuk periode yang sama.
+    // SEBELUMNYA jalur ini memakai `lang = process.env.REPORT_DEFAULT_LANG || 'id'`
+    // langsung dari query, lalu `language = (lang === 'id' || lang === 'id-ID') ? 'id' : 'en'`.
+    //
+    // Masalahnya: setting `report_lang` di Pengaturan TIDAK PERNAH dibaca di
+    // sini — padahal jalur email membacanya lewat `resolveReportParams()`.
+    // User memilih "English" di Pengaturan → email berbahasa Inggris, WhatsApp
+    // berbahasa Indonesia. Dua kanal, satu periode, dua bahasa.
+    //
+    // Sekarang kedua jalur lewat SATU resolver yang sama, dan hasilnya dipakai
+    // untuk teks ringkasan DAN PDF (bukan hanya teks).
     const {
       workStart, workEnd, detectLate: isLateEnabled, toleranceMinutes,
       companyName, branding, lang: resolvedLang,
-    } = await resolveReportParams({ ...req.query, lang: language });
+    } = await resolveReportParams({ ...req.query });
+
+    // Normalisasi 'id-ID' → 'id' (nilai setting bisa ditulis 'id-ID').
+    const language = (resolvedLang === 'id' || resolvedLang === 'id-ID') ? 'id' : 'en';
 
     // Nomor default WhatsApp dari Pengaturan dipakai bila parameter
     // `recipients` tidak diberikan. SEBELUMNYA setting `wa_default_to` tidak
@@ -578,7 +589,23 @@ export async function sendReportWhatsApp(req, res) {
     }
 
     await ensureRangeSynced(startDate, endDate);
-    const { data, stats } = await fetchAttendanceData(startDate, endDate);
+    const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
+
+    // Laporan dibangun SATU KALI di sini, lalu dipakai untuk PDF (bila
+    // diminta) DAN untuk teks ringkasan.
+    //
+    // SEBELUMNYA jalur ini membangun laporan DUA KALI: sekali untuk teks
+    // (dengan `language`) dan sekali lagi untuk PDF (dengan `language` juga,
+    // tapi memakai set parameter yang bisa berbeda). Dua kali agregasi =
+    // boros, dan kalau data berubah di tengah jalan, angka di PDF bisa
+    // berbeda dari angka di teks.
+    //
+    // Sekarang: satu `buildDetailedReport()` → satu objek `report` → PDF dan
+    // teks dijamin berasal dari data yang sama.
+    const { report } = buildDetailedReport(
+      data, stats, language, workStart, workEnd, isLateEnabled,
+      startDate, endDate, toleranceMinutes, companyName, branding,
+    );
 
     // Pesan WhatsApp mengikuti bahasa laporan (bukan hardcoded Indonesia).
     //
@@ -655,11 +682,8 @@ export async function sendReportWhatsApp(req, res) {
     let pdfAttachment = null;
     if (wantAttachment) {
       try {
-        // Objek report yang SAMA dipakai untuk HTML — angka dijamin identik.
-        const { report } = buildDetailedReport(
-          data, stats, language, workStart, workEnd, isLateEnabled,
-          startDate, endDate, toleranceMinutes, companyName, branding,
-        );
+        // Pakai objek `report` yang SUDAH dibangun di atas — bukan membangun
+        // ulang. Satu sumber data untuk teks DAN PDF.
         const pdfBuffer = await pdfToBuffer(report, language);
         pdfAttachment = {
           buffer: pdfBuffer,

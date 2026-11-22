@@ -42,6 +42,22 @@ cek('nama perusahaan kosong (spasi) → judul default',
 cek('judul English ikut pakai nama',
   reportTitle('en', 'PT Guard Test', 'Attendance Report') === 'Attendance Report — PT Guard Test');
 
+// Judul custom yang HANYA spasi harus diperlakukan sebagai kosong.
+//
+// SEBELUMNYA: `String(customTitle || fallback || '')` — spasi itu truthy,
+// jadi `fallback` tidak pernah dipakai dan judulnya jadi " — PT Guard
+// Test" (memulai dengan tanda pisah). Reachability: `settingStr()`
+// mengembalikan nilai DB mentah, jadi user yang mengetik spasi di field
+// "Judul Laporan" cukup untuk memicu ini.
+cek('judul custom spasi saja → pakai judul bawaan + nama',
+  reportTitle('id', 'PT Guard Test', 'Laporan Absensi', '   ') === 'Laporan Absensi — PT Guard Test');
+cek('judul custom spasi saja (tab/newline) → pakai judul bawaan',
+  reportTitle('id', 'PT Guard Test', 'Laporan Absensi', '\t\n ') === 'Laporan Absensi — PT Guard Test');
+cek('judul custom spasi saja tanpa nama perusahaan → judul bawaan',
+  reportTitle('id', '', 'Laporan Absensi', '   ') === 'Laporan Absensi');
+cek('judul custom authoritative — nama perusahaan TIDAK ditambahkan',
+  reportTitle('id', 'PT Guard Test', 'Laporan Absensi', 'Rekap Bulanan') === 'Rekap Bulanan');
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B. Semua format memakai judul yang SAMA
 // ═══════════════════════════════════════════════════════════════════════════════

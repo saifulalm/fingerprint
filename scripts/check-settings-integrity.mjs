@@ -51,6 +51,16 @@ if (/prisma\.systemSetting\.upsert/.test(ctrl)) {
 const panel = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'SettingsPanel.jsx'), 'utf8');
 const uiKeys = new Set([...panel.matchAll(/key:\s*'([a-z_]+)'/g)].map((m) => m[1]));
 
+// Fail-closed: kalau tidak ada field UI yang terbaca, regex-nya tidak cocok
+// (mis. FIELD_DEFS direstrukturisasi) → cek ini tidak boleh melolos.
+if (uiKeys.size === 0) {
+  failed = 1;
+  console.log(
+    'FAIL  tidak ada field UI yang terbaca di SettingsPanel.jsx — ' +
+    'cek "field UI tanpa pemakaian server" tidak bisa diverifikasi (fail-closed)',
+  );
+}
+
 const serverFiles = walk(SERVER);
 const serverSrc = serverFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
 
@@ -107,9 +117,39 @@ if (dead.length) {
 // server-only) harus muncul sebagai `key: '...'` di FIELD_DEFS SettingsPanel.
 const ctrlSrc = readFileSync(path.join(SERVER, 'controllers', 'settingsController.js'), 'utf8');
 const keysBlock = ctrlSrc.match(/SETTINGS_KEYS\s*=\s*\[([\s\S]*?)\n\];/);
+
+// PENTING — cek ini HARUS gagal TERBUKA (fail-closed).
+//
+// SEBELUMNYA: `const serverKeys = keysBlock ? [...] : []` — kalau regex-nya
+// tidak lagi cocok (array ditutup `]);`, dibungkus `Object.freeze([...])`,
+// atau konstantanya pindah file), `serverKeys` jadi `[]`, cek mencetak
+// "semua 0 setting server punya field UI" lalu keluar dengan exit code 0.
+//
+// Akibatnya guard ini bisa DILEMAT secara diam-diam persis saat dibutuhkan —
+// persis kebalikan dari tujuannya. Kalau blok tidak ditemukan, itu ERROR,
+// bukan "nol setting, semua aman".
+if (!keysBlock) {
+  failed = 1;
+  console.log(
+    'FAIL  blok SETTINGS_KEYS tidak ditemukan di settingsController.js — ' +
+    'cek "setting server tanpa field UI" tidak bisa diverifikasi (fail-closed)',
+  );
+  console.log('      Sesuaikan regex ekstraksi bila format deklarasi berubah.');
+}
+
 const serverKeys = keysBlock
   ? [...keysBlock[1].matchAll(/key:\s*'([a-z_]+)'/g)].map((m) => m[1])
   : [];
+
+// Jumlah key yang terbaca harus plausibel. Kalau nol, berarti regex
+// kembali tidak cocok — jangan dianggap "semua aman".
+if (keysBlock && serverKeys.length === 0) {
+  failed = 1;
+  console.log(
+    'FAIL  tidak ada key yang terbaca dari SETTINGS_KEYS — ' +
+    'regex ekstraksi tidak cocok (fail-closed)',
+  );
+}
 
 // Key yang memang TIDAK punya field UI:
 //   - key grup tab ('email', 'whatsapp', 'general')

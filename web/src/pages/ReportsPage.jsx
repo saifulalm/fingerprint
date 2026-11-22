@@ -512,6 +512,15 @@ export default function ReportsPage() {
             {t('rep.attach_pdf_hint') || 'Email selalu menyertakan PDF. WhatsApp opsional karena ada batas ukuran file.'}
           </span>
         </div>
+
+        {/* Catatan tambahan HANYA muncul saat email TIDAK memakai PDF —
+            hint di atas berbunyi "Email selalu menyertakan PDF", jadi begitu
+            user mematikan centang email, catatan ini yang meluruskan. */}
+        {!attachPdf && (
+          <p className="mt-3 text-xs text-[#F59E0B]">
+            {t('rep.attach_pdf_email_off') || 'Email saat ini dikirim tanpa lampiran PDF.'}
+          </p>
+        )}
       </Card>
 
       {/* Features Info */}

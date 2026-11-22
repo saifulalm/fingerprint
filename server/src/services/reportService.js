@@ -441,6 +441,9 @@ function escHtml(s) {
 //   2. judul bawaan      → "Laporan Absensi" / "Attendance Report"
 // lalu nama perusahaan ditambahkan: "Laporan Absensi — PT Guard Test"
 //
+// CATATAN: bila `report_title` terisi, nama perusahaan TIDAK ikut
+// ditambahkan (judul custom bersifat authoritative) — lihat `reportTitle()`.
+//
 // Subjudul & footer bersifat opsional. Kalau kosong, teks bawaan (periode /
 // "Dibuat oleh Sistem Absensi Fingerprint") tetap dipakai.
 //
@@ -1113,7 +1116,12 @@ function buildText(report, lang) {
 //   company_name kosong                   → "LAPORAN ABSENSI"
 //   company_name = "PT Guard Test"        → "LAPORAN ABSENSI — PT GUARD TEST"
 //   report_title = "Rekap Bulanan"        → "REKAP BULANAN"
-//   report_title = "Rekap Bulanan" + PT   → "REKAP BULANAN — PT GUARD TEST"
+//
+// CATATAN: `report_title` yang terisi = AUTHORITATIVE. Nama perusahaan
+// TIDAK ikut ditambahkan — kalau ikut, judulnya jadi
+// "REKAP BULANAN — PT GUARD TEST" padahal user sudah menentukan sendiri
+// judulnya. Ini yang dimaksud README ("Judul Laporan: Mengganti judul
+// sepenuhnya, tidak ditambah nama perusahaan").
 //
 // SEBELUMNYA judul selalu hardcoded "Laporan Absensi" di PDF, HTML, dan
 // Excel — nama perusahaan hanya muncul di subjek email. Jadi user tidak
@@ -1125,12 +1133,23 @@ function buildText(report, lang) {
 // @param {string} [customTitle] judul custom dari Pengaturan
 // @returns {string}
 export function reportTitle(lang, companyName, fallback, customTitle = '') {
-  const base = String(customTitle || fallback || '').trim();
+  // SEMUA input di-trim di sini — bukan hanya di pemanggil.
+  //
+  // SEBELUMNYA: `const base = String(customTitle || fallback || '').trim();`
+  // Kalau `customTitle` berisi spasi saja ("   "), `customTitle || fallback`
+  // mengambil spasi itu (truthy), bukan fallback — hasilnya `base` kosong
+  // dan judul jadi " — PT Guard Test" (memulai dengan tanda pisah).
+  //
+  // reachability: `resolveReportParams()` mengembalikan nilai setting apa
+  // adanya (tanpa trim), jadi user yang mengetik spasi di field "Judul
+  // Laporan" cukup untuk memicu ini.
+  const custom = String(customTitle ?? '').trim();
   const company = String(companyName || '').trim();
+  const base = custom || String(fallback || '').trim();
 
   // Judul custom = authoritative. Nama perusahaan tidak ditambahkan
   // otomatis — user yang menentukan sendiri judulnya.
-  if (customTitle && String(customTitle).trim()) return base;
+  if (custom) return custom;
 
   if (!company) return base;
   return `${base} — ${company}`;

@@ -468,8 +468,13 @@ report_title diisi   → dipakai utuh, nama perusahaan TIDAK ditambahkan
 report_title kosong  → "Laporan Absensi" + " — " + company_name (bila ada)
 ```
 
+Nilai yang hanya berisi spasi diperlakukan sebagai **kosong** — jadi mengetik
+spasi di "Judul Laporan" tidak membuat judul jadi `" — PT Guard Test"`.
+
 Judul/subjudul/footer berlaku **seragam** di semua format: PDF, HTML, Excel,
 Teks, subjek email, ringkasan WhatsApp, dan jadwal otomatis (scheduler).
+Bahasa laporan juga seragam: setelan `report_lang` di Pengaturan dipakai
+oleh email **dan** WhatsApp (sebelumnya hanya email yang membacanya).
 
 ### B. Mengirim PDF sebagai lampiran
 
