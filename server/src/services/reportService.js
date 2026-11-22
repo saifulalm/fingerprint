@@ -2432,10 +2432,58 @@ function buildPdfExport(report, lang) {
   // Footer dicetak di SEMUA halaman (bukan hanya halaman terakhir) supaya
   // laporan tetap rapi saat tabel terpotong antar halaman.
   //
-  // PENTING: margin bawah halaman dibuat 0 sementara. Tanpa ini, PDFKit
-  // menghitung maxY = tinggiHalaman - marginBawah (= H-36).Posisi footer
+  // PENTING — margin bawah halaman dibuat 0 sementara. Tanpa ini, PDFKit
+  // menghitung maxY = tinggiHalaman - marginBawah (= H-36). Posisi footer
   // (H-30) berada DI BAWAH maxY sehingga `doc.text()` memanggil
   // `nextSection()` dan menambah halaman kosong di akhir PDF.
+  //
+  // PENTING 2 — footer yang PANJANG dipotong ke SATU baris.
+  //
+  // SEBELUMNYA: `lineBreak: false` dipakai untuk footer. Tapi `lineBreak:
+  // false` hanya mencegah PEMBATASAN ke bawah — PDFKit TETAP membungkus
+  // teks di lebar yang tersedia. Footer custom yang panjang (mis. "Rahasia
+  // — Hanya Untuk Internal" diulang) membungkus ke baris ke-2, ke-3, dst.,
+  // dan baris-baris itu jatuh DI BAWAH tepi halaman → PDFKit menambah
+  // halaman baru → dokumen jadi 6 halaman (dari 2), dengan halaman kosong
+  // di antaranya dan nomor halaman jadi salah ("Halaman 2 / 2" di halaman 6).
+  //
+  // CATATAN: opsi `ellipsis: true` TIDAK bisa dipakai di sini — PDFKit hanya
+  // menerapkan ellipsis bila opsi `height` ikut diisi (lihat LineWrapper.wrap:
+  // `if (this.height != null && this.ellipsis …)`). Tanpa `height`, teks tetap
+  // membungkus. Jadi pemotasan dilakukan manual lewat `widthOfString()`.
+  //
+  // PENTING — `widthOfString()` memakai font & ukuran YANG SEDANG AKTIF di
+  // dokumen (`this._font`, `this._fontSize`), BUKAN opsi yang kita teruskan.
+  // Jadi font HARUS di-set lebih dulu, kalau tidak pengukurannya memakai
+  // font terakhir yang dipakai (mis. Helvetica-Bold dari nomor halaman) dan
+  // batas potongannya jadi meleset.
+  //
+  // Dan teks digambar TANPA opsi `width`: opsi `width` mengaktifkan
+  // LineWrapper PDFKit yang MEMBUNGKUS teks — justru memicu bug ini.
+  // Karena panjang teks sudah dipotong agar muat, `width` tidak diperlukan;
+  // teks lalu digambar sebagai satu fragmen, tidak pernah membungkus dan
+  // tidak pernah menambah halaman.
+  //
+  // Footer laporan memang satu baris kecil di kaki halaman — isi penuhnya
+  // tidak pernah dibutuhkan di sana, jadi memotong dengan "…" aman.
+  const FOOTER_SIZE = 7.5;
+  const footerWidth = pageW - 120;
+  doc.fontSize(FOOTER_SIZE).font('Helvetica');
+  const footerFull = (() => {
+    const full = `${br.footer || T[lang]?.footer || T.en.footer}  •  ${fmtDateTimeLang(report.generatedAt, lang)} WIB`;
+    if (doc.widthOfString(full) <= footerWidth) return full;
+    // Cari batas karakter terpanjang yang masih muat (biner search).
+    let lo = 0, hi = full.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (doc.widthOfString(full.slice(0, mid).trimEnd() + '…') <= footerWidth) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return full.slice(0, lo).trimEnd() + '…';
+  })();
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
@@ -2446,10 +2494,10 @@ function buildPdfExport(report, lang) {
     doc.moveTo(M, footerY - 6).lineTo(W - M, footerY - 6)
       .lineWidth(0.5).stroke(PDF_STYLE.slate200);
 
-    doc.fillColor(PDF_STYLE.slate500).fontSize(7.5).font('Helvetica')
+    doc.fillColor(PDF_STYLE.slate500).fontSize(FOOTER_SIZE).font('Helvetica')
       .text(
-        `${br.footer || T[lang]?.footer || T.en.footer}  •  ${fmtDateTimeLang(report.generatedAt, lang)} WIB`,
-        M, footerY, { width: pageW - 120, lineBreak: false },
+        footerFull,
+        M, footerY, { lineBreak: false },
       );
 
     // Nomor halaman di kanan.

@@ -90,5 +90,24 @@ const brandedBuf = await buildPdf({
 });
 fs.writeFileSync(brandedOut, brandedBuf);
 console.log('PDF bytes:', brandedBuf.length, '->', brandedOut);
+
+// Varian ketiga: footer PANJANG.
+//
+// SEBELUMNYA varian ini tidak ada, dan hasilnya: footer membungkus ke
+// beberapa baris, baris-baris itu jatuh di bawah tepi halaman, PDFKit
+// menambah halaman kosong → dokumen 6 halaman (dari 2) dan nomor halaman
+// jadi salah ("Halaman 2 / 2" di halaman terakhir).
+//
+// Gate WAJIB mengujinya, kalau tidak regresi footer tidak akan pernah
+// terdeteksi.
+const longFooterOut = out.replace(/\.pdf$/, '') + '-long-footer.pdf';
+const longFooterBuf = await buildPdf({
+  title:    'Rekap Absensi Bulanan',
+  subtitle: 'Rekap Absensi Karyawan PT Guard Test',
+  footer:   'RAHASIA - Hanya Untuk Internal '.repeat(30).trim(),
+});
+fs.writeFileSync(longFooterOut, longFooterBuf);
+console.log('PDF bytes:', longFooterBuf.length, '->', longFooterOut);
+
 console.log('Pemeriksaan layout dijalankan oleh scripts/check-pdf-layout.py (bbox absolut).');
 

@@ -16,7 +16,7 @@
     "test:scheduler": "node scripts/test-scheduler-email.mjs",
     "test:smtp": "node scripts/test-email-local.mjs",
     "test:email": "node scripts/test-email-local.mjs --send",
-    "check:pdf-layout": "node scripts/probe-pdf-layout.mjs probe-layout.pdf && node scripts/run-pdf-layout-check.mjs probe-layout.pdf probe-layout-branded.pdf",
+    "check:pdf-layout": "node scripts/probe-pdf-layout.mjs probe-layout.pdf && node scripts/run-pdf-layout-check.mjs probe-layout.pdf probe-layout-branded.pdf probe-layout-long-footer.pdf",
     "check:prisma-ids": "node scripts/check-prisma-id-defaults.mjs prisma/schema.prisma",
     "check:identity": "node scripts/test-identity-resolver.mjs",
     "check:async-handlers": "node scripts/check-async-handlers.mjs",

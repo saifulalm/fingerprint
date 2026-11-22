@@ -37,6 +37,7 @@ server/sessions/
 # Artefak verifikasi laporan (dihasilkan oleh npm run check:pdf-layout)
 server/probe-layout.pdf
 server/probe-layout-branded.pdf
+server/probe-layout-long-footer.pdf
 server/_out.pdf
 server/_out.html
 server/_out.xlsx

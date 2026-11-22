@@ -13,6 +13,30 @@ doc = pymupdf.open(pdf_path)
 print(f"PDF: {pdf_path}  halaman={doc.page_count}")
 
 total_overlap = 0
+
+# ─── Halaman kosong ─────────────────────────────────────────────────────────────
+#
+# Halaman yang HANYA berisi footer (atau tidak berisi teks isi) adalah
+# gejala PDFKit menambah halaman karena teks meluber melewati tepi halaman.
+#
+# SEBELUMNYA cek ini tidak ada. Footer yang panjang membungkus ke bawah,
+# baris-baris itu jatuh di luar halaman → PDFKit menambah halaman kosong →
+# dokumen jadi 6 halaman (dari 2) dan nomor halaman jadi salah.
+#
+#/pages kosong DIHARAPKAN di laporan ini karena tabel panjang terpotong →
+# halaman lanjutan tetap punya isi. Yang werdah adalah halaman yang isinya
+# cuma footer.
+empty_pages = []
+for pno in range(doc.page_count):
+    page = doc[pno]
+    # Bandingkan jumlah kata di area BADAN halaman vs area FOOTER.
+    body_words = [w for w in page.get_text("words") if w[3] < page.rect.height - 45]
+    if not body_words:
+        empty_pages.append(pno + 1)
+
+for pno in empty_pages:
+    print(f"  halaman {pno}: HANYA berisi footer (halaman kosong) -> FAIL")
+
 for pno in range(doc.page_count):
     page = doc[pno]
     words = page.get_text("words")  # x0,y0,x1,y1,word,block,line,wordno
@@ -54,4 +78,7 @@ for pno in range(doc.page_count):
     total_overlap += len(overlaps)
 
 print("HASIL:", "OK tidak ada tumpang tindih" if total_overlap == 0 else f"FAIL {total_overlap} tumpang tindih")
+if empty_pages:
+    print(f"FAIL {len(empty_pages)} halaman kosong (hanya footer): {empty_pages}")
+    sys.exit(1)
 sys.exit(0 if total_overlap == 0 else 1)

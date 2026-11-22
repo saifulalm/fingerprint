@@ -457,6 +457,16 @@ export default function SettingsPanel({ showHeader = true }) {
         recipients,
         lang: settings.report_lang || 'id',
       });
+      // Server mengembalikan `attachmentWarning` HANYA kalau pembuatan PDF
+      // gagal (email tetap terkirim, tapi tanpa lampiran).
+      //
+      // Tanpa cabang ini, user melihat toast hijau "Laporan test terkirim!"
+      // lalu mengira PDF ikut terkirim — padahal yang tiba hanya HTML.
+      // Kegagalan yang tidak terlihat = bug kelas "diam-diam tidak berefek".
+      if (res.data?.attachmentWarning) {
+        toast_(res.data.attachmentWarning, false);
+        return;
+      }
       toast_(res.data?.message || t('settings.test_report_sent') || 'Laporan test terkirim!');
     } catch (e) {
       toast_(e.response?.data?.error || e.message, false);

@@ -1,6 +1,6 @@
 // Settings controller — system settings CRUD + test email
 import nodemailer from 'nodemailer';
-import { buildDetailedReport, pdfToBuffer } from '../services/reportService.js';
+import { buildDetailedReport, pdfToBuffer, reportTitle } from '../services/reportService.js';
 import { fetchAttendanceData } from './reportController.js';
 import { fmtDateLong } from '../utils/time.js';
 import {
@@ -325,10 +325,25 @@ export async function testReportEmail(req, res) {
 
     const recipientsList = recipients.split(',').map(r => r.trim()).filter(Boolean);
     // Use professional Indonesian date format
-    const subjectSuffix = companyName ? ` — ${companyName}` : '';
-    const subject = lang === 'id'
-      ? `Laporan Absensi${subjectSuffix} — TEST — ${fmtDateLong(startDate)}`
-      : `Attendance Report${subjectSuffix} — TEST — ${fmtDateLong(startDate)}`;
+    //
+    // Subjek memakai judul yang SAMA dengan isi laporan — sama seperti
+    // `reportController.sendReportEmail()` dan scheduler.
+    //
+    // SEBELUMNYA: subjek selalu "Laporan Absensi — <company>" walau isi PDF-nya
+    // titled custom ("Rekap Bulanan"). User melihat subjek generik padahal
+    // sudah mengatur judul custom — persis kelas bug "field mati" yang
+    // berulang di proyek ini.
+    //
+    // Perhatikan juga: `lang` (param request) YANG DIPAKAI untuk subjek,
+    // sedangkan `reportLang` (setting `report_lang`) yang dipakai untuk isi
+    // laporan. Keduanya bisa berbeda — subjek harus mengikuti ISI, jadi
+    // subjek memakai `reportLang`.
+    const titleText = reportTitle(
+      reportLang, companyName,
+      reportLang === 'id' ? 'Laporan Absensi' : 'Attendance Report',
+      branding.title,
+    );
+    const subject = `${titleText} — TEST — ${fmtDateLong(startDate)}`;
 
     // ─── Lampiran PDF ───────────────────────────────────────────────────────
     //
@@ -339,6 +354,7 @@ export async function testReportEmail(req, res) {
     // Ini penting supaya user bisa memverifikasi SEBELUM mengatur jadwal:
     // apakah email masuk, apakah PDF-nyaattach, apakah judulnya custom.
     const attachments = [];
+    let attachmentWarning = null;
     try {
       const pdfBuffer = await pdfToBuffer(report, reportLang);
       attachments.push({
@@ -349,6 +365,12 @@ export async function testReportEmail(req, res) {
     } catch (pdfErr) {
       // Lampiran gagal → email tetap dikirim (HTML sudah lengkap).
       console.error('[settings/test-report] Gagal membuat lampiran PDF:', pdfErr.message);
+      // PENTING: kegagalan ini HARUS sampai ke user, tidak cukup di log
+      // server. Tanpa ini, response tetap `success: true` dan frontend
+      // menampilkan "Laporan test terkirim!" — user mengira PDF ikut terkirim
+      // padahal yang tiba hanya HTML.
+      attachmentWarning =
+        'Email terkirim TANPA lampiran PDF — pembuatan PDF gagal: ' + pdfErr.message;
     }
 
     await transporter.sendMail({
@@ -364,6 +386,8 @@ export async function testReportEmail(req, res) {
       success: true,
       message: `Laporan test terkirim ke ${recipientsList.length} penerima`,
       attachments: attachments.map((a) => ({ filename: a.filename, size: a.content.length })),
+      // Non-null HANYA kalau lampiran gagal dibuat (lihat catch di atas).
+      attachmentWarning,
       stats,
     });
   } catch (err) {
