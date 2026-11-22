@@ -419,6 +419,97 @@ const BRAND = {
 // baris KOSONG → satu baris terfreeze sia-sia, dan baris ringkasan ikut
 // terpotong saat scroll. Dengan subjudul, 3 baris = judul + subjudul + periode
 // (benar).
+// ─── F3. Struktur sheet Excel: merge tidak overlap, label tidak hilang ────────
+//
+// Pertanyaan review yang belum dijawab: apakah `mergeCells` dipakai dengan
+// benar (merge lalu tulis sel anchor), dan apakah SEMUA referensi baris
+// bergeser konsisten saat subjudul ada.
+//
+// Diuji dengan MEMBANGUN workbook-nya (bukan membaca kode), lalu:
+//   1. semua range merge dicek tidak saling overlap
+//   2. semua label wajib (Total Kejadian … Jadwal Kerja) harus ada
+//   3. urutan label harus sama di kedua varian (hanya bergeser 1 baris)
+console.log('\n=== F3. STRUKTUR SHEET EXCEL ===');
+{
+  const parseRef = (ref) => {
+    const m = ref.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+    if (!m) return null;
+    const colNum = (s) => s.split('').reduce((a, ch) => a * 26 + (ch.charCodeAt(0) - 64), 0);
+    return { c1: colNum(m[1]), r1: +m[2], c2: colNum(m[3]), r2: +m[4] };
+  };
+  const overlaps = (a, b) =>
+    a.c1 <= b.c2 && b.c1 <= a.c2 && a.r1 <= b.r2 && b.r1 <= a.r2;
+
+  const wbX = buildExportReport(fakeData, fakeStats, 'id', 'excel', '09:00', '17:00', true,
+    '2026-11-10', '2026-11-10', 0, COMPANY);
+  const wbSub = buildExportReport(fakeData, fakeStats, 'id', 'excel', '09:00', '17:00', true,
+    '2026-11-10', '2026-11-10', 0, COMPANY, BRAND);
+
+  // 1. Merge tidak overlap (SEMUA sheet).
+  let mergeBad = 0;
+  for (const wb of [wbX, wbSub]) {
+    for (const ws of wb.worksheets) {
+      const merges = ws.model?.merges ? Array.from(ws.model.merges) : [];
+      const parsed = merges.map(parseRef).filter(Boolean);
+      for (let i = 0; i < parsed.length; i++) {
+        for (let j = i + 1; j < parsed.length; j++) {
+          if (overlaps(parsed[i], parsed[j])) {
+            console.log(`    overlap di ${ws.name}: ${merges[i]} & ${merges[j]}`);
+            mergeBad++;
+          }
+        }
+      }
+    }
+  }
+  cek('tidak ada merge yang saling overlap', mergeBad === 0, `(nilai: ${mergeBad})`);
+
+  // 2. Semua label wajib ada di kedua varian.
+  const WAJIB = ['Total Kejadian', 'Karyawan Unik', 'Hari Kerja', 'Mode Verifikasi',
+                 'Terlambat', 'Tepat Waktu', 'Menit Terlambat', 'Jadwal Kerja'];
+  const labelsOf = (wb) => {
+    const ws = wb.getWorksheet('Ringkasan');
+    const out = [];
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      const v = row.getCell(1).value;
+      if (v !== null && v !== undefined && String(v).trim()) out.push(String(v));
+    });
+    return out;
+  };
+  const lx = labelsOf(wbX);
+  const lb = labelsOf(wbSub);
+  const hilang = WAJIB.filter((w) =>
+    !lx.some((l) => l.includes(w)) || !lb.some((l) => l.includes(w)));
+  cek('semua label wajib ada di kedua varian', hilang.length === 0,
+    `(hilang: ${hilang.join(', ') || 'tidak ada'})`);
+
+  // 3. Struktur BARIS sama di kedua varian.
+  //
+  // Yang dibandingkan adalah baris yang ISinyaLABEL DATA (bukan judul,
+  // subjudul, atau periode — ketiganya memang berbeda isinya). Label data
+  // harus PERSIS SAMA dan dalam urutan SAMA; hanya NOMOR barisnya yang
+  // bergeser satu.
+  const STRUKTUR = ['Total Kejadian', 'Karyawan Unik', 'Hari Kerja', 'Mode Verifikasi',
+                    'Terlambat', 'Tepat Waktu', 'Menit Terlambat', 'Jadwal Kerja'];
+  const struktur = (arr) => STRUKTUR.map((w) => {
+    const idx = arr.findIndex((l) => l.includes(w));
+    return idx === -1 ? '(hilang)' : w;
+  });
+  // urutan label data = urutan kemunculannya di sheet
+  const urutanData = (arr) => arr
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => STRUKTUR.some((w) => l.includes(w)))
+    .map(({ l }) => STRUKTUR.find((w) => l.includes(w)));
+
+  const ordX = urutanData(lx);
+  const ordB = urutanData(lb);
+  cek('urutan label data sama di kedua varian',
+    JSON.stringify(ordX) === JSON.stringify(ordB),
+    `(tanpa: ${JSON.stringify(ordX).slice(0, 90)})`);
+  cek('semua label data terdeteksi (tidak ada "(hilang)")',
+    !struktur(lx).includes('(hilang)') && !struktur(lb).includes('(hilang)'),
+    `(tanpa: ${struktur(lx).join(',')})`);
+}
+
 console.log('\n=== F2. FREEZE PANE SHEET RINGKASAN ===');
 {
   const mk = (branding) => buildExportReport(
