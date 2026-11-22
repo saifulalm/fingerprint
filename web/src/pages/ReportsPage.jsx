@@ -479,15 +479,6 @@ export default function ReportsPage() {
         </div>
       </Card>
 
-      {/* Action Buttons */}
-      <div className="flex flex-wrap gap-3">
-        <ActionButton icon={FileSpreadsheet} label={t('rep.excel_label')} color="#10B981" onClick={() => downloadFile('excel')} loading={loading.excel} />
-        <ActionButton icon={FileText} label={t('rep.pdf_label')} color="#3B82F6" onClick={() => downloadFile('pdf')} loading={loading.pdf} />
-        <ActionButton icon={Eye} label={t('rep.preview')} color="#8B5CF6" onClick={handlePreview} loading={loading.preview} />
-        <ActionButton icon={Mail} label={t('rep.email_label')} color="#2563EB" onClick={handleEmail} loading={loading.email} disabled={!recipients.trim()} />
-        <ActionButton icon={Send} label={t('rep.wa_label')} color="#EA580C" onClick={handleWhatsApp} loading={loading.wa} disabled={!recipients.trim()} />
-      </div>
-
       {/* Opsi lampiran PDF */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
@@ -496,7 +487,11 @@ export default function ReportsPage() {
               type="checkbox"
               checked={attachPdf}
               onChange={(e) => setAttachPdf(e.target.checked)}
-              className="w-4 h-4 accent-[#2563EB] cursor-pointer"
+              // Nonaktif selama pengiriman email berjalan — checkbox yang
+              // bisa diubah saat request underway membuat user bewildered
+              // (lampiran yang terkirim ≠ pilihan yang terakhir dilihat).
+              disabled={loading.email}
+              className="w-4 h-4 accent-[#2563EB] cursor-pointer disabled:opacity-50"
             />
             <span className="text-sm text-[#F1F5F9]">
               {t('rep.attach_pdf_email') || 'Lampirkan PDF ke email'}
@@ -508,7 +503,8 @@ export default function ReportsPage() {
               type="checkbox"
               checked={attachPdfWa}
               onChange={(e) => setAttachPdfWa(e.target.checked)}
-              className="w-4 h-4 accent-[#EA580C] cursor-pointer"
+              disabled={loading.wa}
+              className="w-4 h-4 accent-[#EA580C] cursor-pointer disabled:opacity-50"
             />
             <span className="text-sm text-[#F1F5F9]">
               {t('rep.attach_pdf_wa') || 'Kirim PDF sebagai dokumen WhatsApp'}
@@ -529,6 +525,16 @@ export default function ReportsPage() {
           </p>
         )}
       </Card>
+
+      {/* Action Buttons */}
+      <div className="flex flex-wrap gap-3">
+        <ActionButton icon={FileSpreadsheet} label={t('rep.excel_label')} color="#10B981" onClick={() => downloadFile('excel')} loading={loading.excel} />
+        <ActionButton icon={FileText} label={t('rep.pdf_label')} color="#3B82F6" onClick={() => downloadFile('pdf')} loading={loading.pdf} />
+        <ActionButton icon={Eye} label={t('rep.preview')} color="#8B5CF6" onClick={handlePreview} loading={loading.preview} />
+        <ActionButton icon={Mail} label={t('rep.email_label')} color="#2563EB" onClick={handleEmail} loading={loading.email} disabled={!recipients.trim()} />
+        <ActionButton icon={Send} label={t('rep.wa_label')} color="#EA580C" onClick={handleWhatsApp} loading={loading.wa} disabled={!recipients.trim()} />
+      </div>
+
 
       {/* Features Info */}
       <Card className="p-5">
