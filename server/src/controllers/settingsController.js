@@ -313,8 +313,20 @@ export async function testReportEmail(req, res) {
     };
 
     const { data, stats } = await fetchAttendanceData(startDate, endDate, workStart, workEnd);
+    // Toleransi keterlambatan diambil dari Pengaturan, sama seperti laporan
+    // manual (`reportController.resolveReportParams`) dan scheduler
+    // (`schedulerService.executeSchedule`).
+    //
+    // SEBELUMNYA argumen ini di-hardcode `0`, padahal komentarnya menjanjikan
+    // "PERSIS seperti laporan yang akan dikirim scheduler". Kalau user
+    // menyetel toleransi 10 menit, laporan scheduler menandai orang terlambat
+    // setelah 10 menit — tapi email uji menandainya setelah 0 menit. User
+    // membandingkan keduanya, melihat angka berbeda, dan menganggap laporan
+    // yang benar salah.
+    const toleranceMinutes = settingInt(settings, 'late_threshold_minutes', 0);
     const { html, text, report } = buildDetailedReport(
-      data, stats, reportLang, workStart, workEnd, detectLate, startDate, endDate, 0, companyName, branding,
+      data, stats, reportLang, workStart, workEnd, detectLate, startDate, endDate,
+      toleranceMinutes, companyName, branding,
     );
 
     const transporter = nodemailer.createTransport({

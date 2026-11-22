@@ -376,6 +376,41 @@ try {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── F4. Toleransi keterlambatan sama di ketiga jalur laporan ──────────────────
+//
+// `buildDetailedReport()` menerima `toleranceMinutes` sebagai argumen ke-9.
+// Tiga jalur memanggilnya:
+//   - settingsController.testReportEmail()  → email uji
+//   - reportController (laporan manual / preview / export)
+//   - schedulerService.executeSchedule()    → jadwal otomatis
+//
+// SEBELUMNYA jalur email uji meng-hardcode `0` sementara dua jalur lain
+// membaca setting `late_threshold_minutes`. Komentarnya sendiri menjanjikan
+// "PERSIS seperti laporan yang akan dikirim scheduler" — jadi email uji dan
+// laporan scheduler bisa menampilkan angka berbeda, dan user menganggap
+// laporan yang benar salah.
+//
+// Terbukti memengaruhi hasil: tolerate 0 → baris "terlambat" (Tepat Waktu 0);
+// toleransi 30 → "tepat waktu" (Tepat Waktu 1).
+console.log('\n=== F4. TOLERANSI KETERLAMBATAN KONSISTEN ===');
+{
+  const read2 = (p) => fs.readFileSync(path.resolve('src', p), 'utf8');
+  const setCtrl = read2('controllers/settingsController.js');
+  const repCtrl = read2('controllers/reportController.js');
+  const schedCtrl2 = read2('services/schedulerService.js');
+
+  // Ketiganya harus membaca toleransi dari SETTINGS, bukan angka tetap.
+  cek('email uji membaca toleransi dari Pengaturan',
+    /settingInt\(settings, 'late_threshold_minutes'/.test(setCtrl));
+  cek('email uji TIDAK lagi memakai toleransi hardcoded 0',
+    !/endDate,\s*0,\s*companyName/.test(setCtrl) &&
+    !/endDate,\s*0,\s*companyName,/.test(setCtrl));
+  cek('laporan manual membaca toleransi dari Pengaturan',
+    /settingInt\(map, 'late_threshold_minutes'/.test(repCtrl));
+  cek('scheduler membaca toleransi dari Pengaturan',
+    /late_threshold_minutes/.test(schedCtrl2));
+}
+
 // F. Guard statis: attachment wired di semua jalur
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n=== F. WIRING ATTACHMENT (statis) ===');
