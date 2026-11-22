@@ -543,6 +543,51 @@ console.log('\n=== F3. STRUKTUR SHEET EXCEL ===');
   cek('semua label data terdeteksi (tidak ada "(hilang)")',
     !struktur(lx).includes('(hilang)') && !struktur(lb).includes('(hilang)'),
     `(tanpa: ${struktur(lx).join(',')})`);
+
+  // 4. Separator (baris kosong) harus tepat di depan tiap blok.
+  //
+  // Ini yang menjawab pertanyaan review: apakah `lateStart` melompati baris
+  // atau bertumpuk? Dan apakah `footerRow = lateStart + 5` menimpa blok
+  // late/ontime/menit/jadwal (yang occupy lateStart..lateStart+3)?
+  //
+  // Aturan: tepat sebelum tiap blok ada SATU baris kosong sebagai pemisah.
+  // Kalau tidak, berarti ada baris yang terlewat atau tertimpa.
+  const rowIndexOf = (wb, label) => {
+    const ws = wb.getWorksheet('Ringkasan');
+    let found = -1;
+    ws.eachRow({ includeEmpty: true }, (row, n) => {
+      const v = row.getCell(1).value;
+      if (found === -1 && v !== null && v !== undefined && String(v).includes(label)) found = n;
+    });
+    return found;
+  };
+  const emptyAt = (wb, n) => {
+    const ws = wb.getWorksheet('Ringkasan');
+    const row = ws.getRow(n);
+    let adaIsi = false;
+    row.eachCell({ includeEmpty: true }, (c) => {
+      if (c.value !== null && c.value !== undefined && String(c.value).trim()) adaIsi = true;
+    });
+    return !adaIsi;
+  };
+
+  for (const [nama, wb] of [['tanpa', wbX], ['dengan', wbSub]]) {
+    const anchors = [
+      ['Total Kejadian', 'Total Kejadian'],
+      ['Terlambat', 'Terlambat'],
+    ];
+    const salah = [];
+    for (const [, label] of anchors) {
+      const r = rowIndexOf(wb, label);
+      if (r < 2) { salah.push(`${label}(baris ${r})`); continue; }
+      if (!emptyAt(wb, r - 1)) salah.push(`sebelum ${label}`);
+    }
+    // Footer: baris sebelum footer harus kosong.
+    const footerRow = rowIndexOf(wb, wbSub === wb ? 'Dibuat oleh' : 'RAHASIA');
+    if (footerRow >= 2 && !emptyAt(wb, footerRow - 1)) salah.push('sebelum footer');
+    cek(`separator kosong tepat sebelum tiap blok (${nama})`,
+      salah.length === 0, `(masalah: ${salah.join(', ') || 'tidak ada'})`);
+  }
 }
 
 console.log('\n=== F2. FREEZE PANE SHEET RINGKASAN ===');
