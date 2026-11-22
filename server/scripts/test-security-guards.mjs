@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import prisma from '../src/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.TEST_BASE_URL || 'http://localhost:6601';
@@ -93,7 +94,39 @@ check('days="abc" DITOLAK (400)', auditBadDays.status === 400, `status=${auditBa
 const auditNegDays = await req('DELETE', '/api/admin/audit?days=-5', { token });
 check('days=-5 DITOLAK (400)', auditNegDays.status === 400, `status=${auditNegDays.status}`);
 
+// ─── Snapshot & restore setting ────────────────────────────────────
+//
+// Script ini menulis `company_name` lewat `PUT /api/settings`. SEBELUMNYA
+// nilainya TIDAK pernah dipulihkan — jadi setiap menjalankan skrip ini
+// mengubah data produksi user (nama perusahaan hilang).
+//
+// Pola yang sama dipakai `test-scheduler-email.mjs`: catat nilai asli, lalu
+// pulihkan di blok `finally`.
+const originalSettings = new Map();
+
+async function snapshotSetting(key) {
+  if (originalSettings.has(key)) return;
+  const row = await prisma.systemSetting.findUnique({ where: { id: key } });
+  originalSettings.set(key, row ? row.value : undefined);
+}
+
+async function restoreSettings() {
+  for (const [key, value] of originalSettings) {
+    if (value === undefined) {
+      await prisma.systemSetting.deleteMany({ where: { id: key } });
+    } else {
+      await prisma.systemSetting.upsert({
+        where: { id: key },
+        create: { id: key, value },
+        update: { value },
+      });
+    }
+  }
+}
+
+try {
 console.log('\n── Guard 3: settings hanya menerima kunci yang dikenal ──');
+await snapshotSetting('company_name');
 const settingsBad = await req('PUT', '/api/settings', {
   token,
   body: { company_name: 'PT Guard Test', definitely_not_a_real_key: 'boom' },
@@ -208,6 +241,18 @@ check('GET /api/employees tetap 200', emps.status === 200, `status=${emps.status
 
 const settings = await req('GET', '/api/settings', { token });
 check('GET /api/settings tetap 200', settings.status === 200, `status=${settings.status}`);
+
+} finally {
+  // Pulihkan setting yang diubah skrip ini — termasuk kalau skrip gagal di
+  // tengah jalan.
+  try {
+    await restoreSettings();
+  } catch (err) {
+    console.error('Gagal memulihkan setting:', err.message);
+    fail++;
+  }
+  try { await prisma.$disconnect(); } catch { /* noop */ }
+}
 
 console.log(`\n=== HASIL: ${pass} lolos, ${fail} gagal ===\n`);
 process.exit(fail > 0 ? 1 : 0);
