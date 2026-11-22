@@ -809,8 +809,8 @@ export const whatsappService = {
    * Mendukung dua jalur:
    *   1. OpenWA gateway — `POST /api/sessions/:id/messages/send-document`
    *      dengan `base64` (dokumen dikirim langsung, tanpa perlu URL publik).
-   *   2. Baileys langsung — `sock.sendMessage(chatId, { document: { url } })`
-   *      dengan Buffer.
+   *   2. Baileys langsung — `sock.sendMessage(chatId, { document: buffer })`
+   *      dengan Buffer (bukan `{ url }` — `url` dibaca Baileys sebagai PATH FILE).
    *
    * @param {string} to nomor WhatsApp
    * @param {Buffer} buffer isi file
@@ -863,10 +863,22 @@ export const whatsappService = {
       );
     }
     try {
+      // Bentuk media WAJIB: `document` diisi Buffer LANGSUNG.
+      //
+      // SEBELUMNYA: `document: { url: buffer }` — SALAH. Baileys
+      // memperlakukan `url` sebagai sumber BERKAS: string `data:` di-decode
+      // base64, `http(s)://` di-stream, dan SELAIN itu dibaca sebagai PATH
+      // FILE di disk. Buffer yang dipaksakan jadi string lewat `.toString()`
+      // → path berisi isi PDF → `ENOENT: no such file or directory`.
+      //
+      // Bukti (diuji terhadap baileys 7.0.0-rc14 yang terpasang):
+      //   getRawMediaUploadData({ url: buffer }) → ENOENT (path = isi PDF)
+      //   getRawMediaUploadData(buffer)        → OK, fileLength = ukuran PDF
+      //
+      // Buffer langsung adalah bentuk yang didukung `WAMediaUpload`
+      // (Buffer | WAMediaPayloadStream | WAMediaPayloadURL).
       const msg = await sock.sendMessage(chatId, {
-        document: {
-          url: buffer,
-        },
+        document: buffer,
         fileName: filename,
         mimetype,
         ...(caption ? { caption } : {}),

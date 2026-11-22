@@ -158,6 +158,51 @@ try {
 } catch (err) { errMsg = err.message; }
 cek('nama file kosong ditolak', /nama file/i.test(errMsg), `(pesan: ${errMsg})`);
 
+// ─── E2. Bentuk media Baileys HARUS Buffer, bukan { url } ──────────────────────
+//
+// Baileys membaca `document: { url }` sebagai SUMBER BERKAS:
+//   - string "data:"      → di-decode base64
+//   - string "http(s)://" → di-stream
+//   - selain itu          → dibaca sebagai PATH FILE di disk
+//
+// Buffer yang dipaksakan jadi string lewat `.toString()` menjadi path berisi
+// isi PDF → `ENOENT: no such file or directory` → dokumen TIDAK PERNAH
+// terkirim lewat jalur Baileys.
+//
+// Diuji terhadap baileys yang terpasang (getRawMediaUploadData):
+//   { url: buffer } → ENOENT
+//   buffer          → OK
+console.log('\n=== E2. BENTUK MEDIA BAILEYS ===');
+const { getRawMediaUploadData } = await import('baileys');
+let rawErr = '';
+let rawLen = 0;
+try {
+  const r = await getRawMediaUploadData({ url: Buffer.from('%PDF-1.4 x') }, 'document', null);
+  rawLen = r.fileLength;
+} catch (err) { rawErr = err.message; }
+cek('Baileys TIDAK bisa memproses { url: Buffer } (harus gagal)',
+  rawErr !== '', `(error: ${rawErr.slice(0, 60)})`);
+
+let rawErr2 = '';
+try {
+  const r2 = await getRawMediaUploadData(Buffer.from('%PDF-1.4 x'), 'document', null);
+  rawLen = r2.fileLength;
+} catch (err) { rawErr2 = err.message; }
+cek('Baileys bisa memproses Buffer langsung',
+  rawErr2 === '' && rawLen > 0, `(fileLength: ${rawLen}, error: ${rawErr2.slice(0, 60)})`);
+
+// Kode produksi WAJIB memakai bentuk Buffer.
+//
+// Baris komentar DILEWATI dulu — penjelasan "SEBELUMNYA: `document: { url:
+// buffer }`" ada di dalam komentar, bukan di kode yang berjalan.
+const waSvcSrc = fs.readFileSync(path.resolve('src', 'services', 'whatsapp.js'), 'utf8');
+const waSvcCode = waSvcSrc
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n');
+cek('kode produksi memakai document: buffer (bukan { url: ... })',
+  /document:\s*buffer\b/.test(waSvcCode) && !/document:\s*\{\s*url:\s*buffer/.test(waSvcCode));
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // F. Guard statis: attachment wired di semua jalur
 // ═══════════════════════════════════════════════════════════════════════════════
