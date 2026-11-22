@@ -15,6 +15,7 @@ import WhatsAppPage from './pages/WhatsAppPage.jsx';
 import ReportsPage from './pages/ReportsPage.jsx';
 import SchedulerPage from './pages/SchedulerPage.jsx';
 import EmployeesPage from './pages/EmployeesPage.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('fp_token');
@@ -42,6 +43,7 @@ export default function App() {
               <Route path="whatsapp" element={<WhatsAppPage />} />
               <Route path="reports" element={<ReportsPage />} />
               <Route path="scheduler" element={<SchedulerPage />} />
+              <Route path="settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

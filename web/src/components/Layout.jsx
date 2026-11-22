@@ -4,7 +4,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, Users, Monitor, FileText, Calendar,
   MessageSquare, LogOut, RefreshCw, Menu, X, Shield,
-  Fingerprint, ChevronRight, Cpu
+  Fingerprint, ChevronRight, Cpu, Settings as SettingsIcon
 } from 'lucide-react';
 import api from '../services/api.js';
 import { useLang } from '../hooks/useLang.js';
@@ -21,6 +21,7 @@ const NAV = [
   { path: '/reports', icon: FileText, key: 'nav.reports' },
   { path: '/scheduler', icon: Calendar, key: 'nav.scheduler' },
   { path: '/whatsapp', icon: MessageSquare, key: 'nav.whatsapp' },
+  { path: '/settings', icon: SettingsIcon, key: 'nav.settings' },
 ];
 
 // Sidebar component

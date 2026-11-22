@@ -323,9 +323,15 @@ function FieldInput({ field, value, onChange, t, lang, maskedValue, isConfigured
   );
 }
 
-export default function SettingsPanel({ showHeader = true }) {
+export default function SettingsPanel({ showHeader = true, initialTab = 'email' }) {
   const { lang, t } = useLang();
-  const [activeTab, setActiveTab] = useState('email');
+  // Tab awal bisa ditentukan oleh pemanggil — mis. halaman /settings membuka
+  // langsung ke tab "Umum" tempat "Nama Perusahaan" berada, supaya user tidak
+  // perlu klik WhatsApp → Pengaturan → Umum cuma untuk mengganti nama.
+  //
+  // SEBELUMNYA tab awal selalu 'email', jadi dari mana pun panel ini dibuka,
+  // user harus klik tab "Umum" dulu untuk sampai ke Nama Perusahaan.
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
